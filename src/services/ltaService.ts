@@ -22,10 +22,7 @@ export interface ServiceArrival {
 
 export const fetchArrivals = async (busStopCode: string): Promise<ServiceArrival[]> => {
     try {
-        // FIX: Updated to v3 API as per LTA Documentation v6.6
-        // The proxy '/lta-api' maps to 'https://datamall2.mytransport.sg/ltaodataservice'
-        // So this becomes '.../ltaodataservice/v3/BusArrival'
-        const response = await axios.get(`/lta-api/v3/BusArrival`, {
+        const response = await axios.get(`/api/lta-proxy`, {
             params: { BusStopCode: busStopCode }
         });
         
