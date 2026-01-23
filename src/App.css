@@ -1,0 +1,147 @@
+:root {
+  --sidebar-width: 350px;
+  --primary-color: #2196F3;
+  --bg-dark: #1a1a1a;
+  --bg-darker: #111;
+  --border-color: #333;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-darker);
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Main Layout */
+.app-container {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+/* Sidebar (Desktop Default) */
+.sidebar {
+  width: var(--sidebar-width);
+  height: 100%;
+  background-color: var(--bg-dark);
+  color: white;
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  z-index: 2000;
+  box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+  transition: transform 0.3s ease;
+}
+
+.sidebar-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex-grow: 1;
+}
+
+.map-container {
+  flex-grow: 1;
+  position: relative;
+  z-index: 1;
+}
+
+/* Inputs */
+.input-group {
+  margin-bottom: 20px;
+  background-color: var(--border-color);
+  padding: 15px;
+  border-radius: 8px;
+}
+
+.dark-input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  background-color: #222;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 4px;
+  box-sizing: border-box; /* Fix padding causing overflow */
+}
+
+.action-btn {
+  width: 100%;
+  padding: 12px;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.action-btn:active {
+  opacity: 0.9;
+  transform: scale(0.98);
+}
+
+/* Favorites Section */
+.favorites-list {
+  margin-top: 20px;
+}
+
+.fav-item {
+  background-color: #252525;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-left: 3px solid transparent;
+}
+
+.fav-item:hover {
+  background-color: #333;
+  border-left: 3px solid var(--primary-color);
+}
+
+/* MOBILE RESPONSIVENESS */
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: 40vh; /* Takes bottom 40% of screen */
+    order: 2; /* Move to bottom */
+    border-right: none;
+    border-top: 1px solid var(--border-color);
+    position: absolute;
+    bottom: 0;
+  }
+
+  .map-container {
+    height: 60vh; /* Takes top 60% */
+    width: 100%;
+    order: 1;
+  }
+  
+  /* Make touch targets larger for mobile */
+  .action-btn {
+    padding: 15px; 
+    font-size: 16px;
+  }
+  
+  .dark-input {
+    padding: 12px;
+    font-size: 16px;
+  }
+}
