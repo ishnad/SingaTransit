@@ -30,6 +30,3 @@ __pycache__/
 
 # Environment Variables
 .env
-
-# Output Data
-public/data/
