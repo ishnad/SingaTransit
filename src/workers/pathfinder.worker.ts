@@ -1,14 +1,11 @@
 import { MinHeap } from '../utils/MinHeap';
 
-// Updated Types to include LRT
-type TransportType = 'BUS' | 'MRT' | 'LRT' | 'WALK' | 'TRANSFER';
-
+// 1. Define Explicit Types
 interface Edge {
-    type: TransportType;
-    service: string; 
-    direction?: number;
+    service: string;
+    direction: number;
     distance: number;
-    weight: number; 
+    weight: number;
 }
 
 interface Graph {
@@ -20,7 +17,6 @@ interface Graph {
 interface PathStep {
     from: string;
     to: string;
-    type: TransportType;
     service: string;
     weight: number;
 }
@@ -30,8 +26,10 @@ interface PreviousStep {
     edge: Edge;
 }
 
+// 2. State
 let graph: Graph | null = null;
 
+// 3. Initialization
 const initGraph = async () => {
     try {
         const response = await fetch('/data/transit_graph.json');
@@ -44,10 +42,14 @@ const initGraph = async () => {
 
 initGraph();
 
+// 4. Algorithm
 const findPath = (startNode: string, endNode: string) => {
+    // DEBUG: Validate Inputs
+    console.log(`Worker: Starting Search ${startNode} -> ${endNode}`);
+    
     if (!graph) return { error: 'Graph not loaded' };
-    if (!graph[startNode]) return { error: `Start Node ${startNode} not found` };
-    if (!graph[endNode]) return { error: `End Node ${endNode} not found` };
+    if (!graph[startNode]) return { error: `Start Node ${startNode} not found in graph` };
+    if (!graph[endNode]) return { error: `End Node ${endNode} not found in graph` };
 
     const distances: { [key: string]: number } = {};
     const previous: { [key: string]: PreviousStep | null } = {};
@@ -57,65 +59,80 @@ const findPath = (startNode: string, endNode: string) => {
     pq.push(startNode, 0);
 
     const visited = new Set<string>();
+    
+    // SAFETY: Iteration Cap to prevent infinite loops (browser freeze)
     let iterations = 0;
-    const MAX_ITERATIONS = 60000; 
+    const MAX_ITERATIONS = 50000; 
 
-    while (pq.length > 0) {
-        iterations++;
-        if (iterations > MAX_ITERATIONS) return { error: 'Timeout' };
+    try {
+        while (pq.length > 0) {
+            iterations++;
+            if (iterations > MAX_ITERATIONS) {
+                console.error("Worker: Hit MAX_ITERATIONS limit. Aborting.");
+                return { error: 'Computation timed out (Possible infinite loop)' };
+            }
 
-        const current = pq.pop();
-        if (!current) break;
-        
-        const u = current.element;
-        const currentDist = current.priority;
+            const current = pq.pop();
+            if (!current) break;
 
-        if (currentDist > (distances[u] ?? Infinity)) continue;
-        if (u === endNode) break;
-        if (visited.has(u)) continue;
-        visited.add(u);
+            const u = current.element;
+            const currentDist = current.priority;
 
-        const neighbors = graph[u];
-        if (!neighbors) continue;
+            // Optimization: If we found a shorter way to 'u' already, skip
+            if (currentDist > (distances[u] ?? Infinity)) continue;
 
-        for (const [v, edges] of Object.entries(neighbors)) {
-            if (!edges || edges.length === 0) continue;
-
-            const bestEdge = edges.reduce((prev, curr) => prev.weight < curr.weight ? prev : curr);
+            if (u === endNode) {
+                console.log(`Worker: Path found after ${iterations} iterations.`);
+                break;
+            }
             
-            // Transfer Penalty logic
-            let penalty = 0;
-            const prevStep = previous[u];
-            if (prevStep) {
-                const prevEdge = prevStep.edge;
-                // Penalize switching services (e.g. Bus 10 -> Bus 12) or Modes (Bus -> MRT)
-                if (prevEdge.service !== bestEdge.service || prevEdge.type !== bestEdge.type) {
-                    penalty = 300; // 5 minute penalty
+            if (visited.has(u)) continue;
+            visited.add(u);
+
+            const neighbors = graph[u];
+            if (!neighbors) continue;
+
+            for (const [v, edges] of Object.entries(neighbors)) {
+                if (!edges || edges.length === 0) continue;
+
+                const bestEdge = edges.reduce((prev, curr) => 
+                    prev.weight < curr.weight ? prev : curr
+                );
+
+                const alt = currentDist + bestEdge.weight;
+
+                if (alt < (distances[v] || Infinity)) {
+                    distances[v] = alt;
+                    previous[v] = { node: u, edge: bestEdge };
+                    pq.push(v, alt);
                 }
             }
-
-            const alt = currentDist + bestEdge.weight + penalty;
-
-            if (alt < (distances[v] || Infinity)) {
-                distances[v] = alt;
-                previous[v] = { node: u, edge: bestEdge };
-                pq.push(v, alt);
-            }
         }
+    } catch (err: any) {
+        console.error("Worker CRASH in loop:", err);
+        return { error: `Worker Algorithm Crash: ${err.message}` };
     }
 
-    if (distances[endNode] === undefined) {
-        return { error: 'No path found' };
+    // 5. Path Reconstruction
+    if (startNode !== endNode && !previous[endNode]) {
+        console.warn("Worker: Finished search but no path found.");
+        return { error: 'No path found between these locations' };
     }
 
     const path: PathStep[] = [];
     let curr: string | null = endNode;
-    let safety = 0;
+    
+    // Safety counter for reconstruction
+    let stepCount = 0;
 
-    while (curr !== null && safety < 1000) {
-        safety++;
+    while (curr !== null) {
+        stepCount++;
+        if (stepCount > 1000) { // Safety break
+             return { error: 'Path reconstruction loop error' };
+        }
+
         if (curr === startNode) break;
-        
+
         const step: PreviousStep | null | undefined = previous[curr];
         
         if (!step) break;
@@ -123,20 +140,30 @@ const findPath = (startNode: string, endNode: string) => {
         path.unshift({
             from: step.node,
             to: curr,
-            type: step.edge.type,
             service: step.edge.service,
             weight: step.edge.weight
         });
+        
         curr = step.node;
     }
 
     return { path, totalDuration: distances[endNode] };
 };
 
+// 6. Message Handler
 self.onmessage = (e: MessageEvent) => {
     const { type, payload } = e.data;
+
     if (type === 'CALCULATE') {
+        if (!graph) {
+            self.postMessage({ type: 'ERROR', error: 'Graph not ready' });
+            return;
+        }
+        
+        console.time('Routing Calculation');
         const result = findPath(payload.start, payload.end);
-        self.postMessage({ type: 'RESULT', payload: result });
+        console.timeEnd('Routing Calculation');
+        
+        self.postMessage({ type: 'RESULT', result });
     }
 };
