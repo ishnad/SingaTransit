@@ -25,11 +25,16 @@ export interface TripLeg {
 }
 
 export const formatRoute = (path: RouteStep[], metadata: Metadata): TripLeg[] => {
-    if (path.length === 0) return [];
+    if (!path || path.length === 0) return [];
 
     const legs: TripLeg[] = [];
     
-    const getName = (id: string) => metadata[id]?.name || id;
+    // Helper to get name (safely handle "Current Location" / "Destination")
+    const getName = (id: string) => {
+        if (id === 'Current Location') return 'Current Location';
+        if (id === 'Destination') return 'Destination';
+        return metadata[id]?.name || id;
+    };
 
     let currentLeg: TripLeg = {
         type: path[0].type,
@@ -45,7 +50,9 @@ export const formatRoute = (path: RouteStep[], metadata: Metadata): TripLeg[] =>
     for (let i = 1; i < path.length; i++) {
         const step = path[i];
 
-        // Combine steps if same service and same type
+        // Combine steps if same service AND same type (e.g. Bus 10 -> Bus 10)
+        // Walking segments usually shouldn't be combined if they are distinct transfers, 
+        // but for "Start -> Walk -> Walk", it's fine.
         if (step.service === currentLeg.service && step.type === currentLeg.type) {
             currentLeg.endStopId = step.to;
             currentLeg.endStopName = getName(step.to);
