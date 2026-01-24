@@ -1,6 +1,7 @@
 interface RouteStep {
     from: string;
     to: string;
+    type: 'BUS' | 'MRT' | 'LRT' | 'WALK' | 'TRANSFER';
     service: string;
     weight: number;
 }
@@ -8,19 +9,19 @@ interface RouteStep {
 interface Metadata {
     [key: string]: {
         name: string;
-        road: string;
+        road?: string;
     }
 }
 
 export interface TripLeg {
-    type: 'BUS' | 'WALK'; // Currently only BUS, but structure allows expansion
+    type: 'BUS' | 'MRT' | 'LRT' | 'WALK' | 'TRANSFER';
     service: string;
     startStopId: string;
     startStopName: string;
     endStopId: string;
     endStopName: string;
     stopCount: number;
-    duration: number; // in seconds
+    duration: number;
 }
 
 export const formatRoute = (path: RouteStep[], metadata: Metadata): TripLeg[] => {
@@ -28,47 +29,44 @@ export const formatRoute = (path: RouteStep[], metadata: Metadata): TripLeg[] =>
 
     const legs: TripLeg[] = [];
     
-    // Initialize first leg
+    const getName = (id: string) => metadata[id]?.name || id;
+
     let currentLeg: TripLeg = {
-        type: 'BUS',
+        type: path[0].type,
         service: path[0].service,
         startStopId: path[0].from,
-        startStopName: metadata[path[0].from]?.name || path[0].from,
+        startStopName: getName(path[0].from),
         endStopId: path[0].to,
-        endStopName: metadata[path[0].to]?.name || path[0].to,
+        endStopName: getName(path[0].to),
         stopCount: 1,
         duration: path[0].weight
     };
 
-    // Iterate starting from second step
     for (let i = 1; i < path.length; i++) {
         const step = path[i];
 
-        // Check if we are continuing on the same service
-        if (step.service === currentLeg.service) {
-            // Extend current leg
+        // Combine steps if same service and same type
+        if (step.service === currentLeg.service && step.type === currentLeg.type) {
             currentLeg.endStopId = step.to;
-            currentLeg.endStopName = metadata[step.to]?.name || step.to;
+            currentLeg.endStopName = getName(step.to);
             currentLeg.stopCount++;
             currentLeg.duration += step.weight;
         } else {
-            // Service changed (Transfer), push current leg and start new one
             legs.push(currentLeg);
 
             currentLeg = {
-                type: 'BUS',
+                type: step.type,
                 service: step.service,
                 startStopId: step.from,
-                startStopName: metadata[step.from]?.name || step.from,
+                startStopName: getName(step.from),
                 endStopId: step.to,
-                endStopName: metadata[step.to]?.name || step.to,
+                endStopName: getName(step.to),
                 stopCount: 1,
                 duration: step.weight
             };
         }
     }
-
-    // Push the final leg
+    
     legs.push(currentLeg);
 
     return legs;
