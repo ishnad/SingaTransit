@@ -1,17 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import axios from 'axios';
 import PathfinderWorker from '../workers/pathfinder.worker?worker';
 
 import { formatRoute, type TripLeg } from '../utils/routeFormatter';
 import { fetchArrivals, getMinutesToArrival, type ServiceArrival } from '../services/ltaService';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { LocationSearch } from './LocationSearch';
 
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
+// Fix Leaflet Icon
 let DefaultIcon = L.icon({
     iconUrl: icon,
     shadowUrl: iconShadow,
@@ -28,13 +29,21 @@ interface Metadata {
         lng: number;
         name: string;
         road: string;
+        type?: 'BUS' | 'MRT' | 'LRT';
     }
 }
 
 interface SavedPlace {
     id: string;
     stopId: string;
-    label: string; // "Home", "Work", "Bedok Mall"
+    label: string; 
+}
+
+// New Interface for Map Segments
+interface RouteSegment {
+    type: 'BUS' | 'MRT' | 'LRT' | 'WALK';
+    service: string;
+    positions: [number, number][];
 }
 
 const MapComponent: React.FC = () => {
@@ -43,7 +52,8 @@ const MapComponent: React.FC = () => {
     const [stats, setStats] = useState<string>('Initializing...');
     
     // 2. Route & Instructions
-    const [routePath, setRoutePath] = useState<[number, number][]>([]);
+    // REPLACED: routePath with routeSegments
+    const [routeSegments, setRouteSegments] = useState<RouteSegment[]>([]);
     const [instructions, setInstructions] = useState<TripLeg[]>([]);
     
     // 3. Real-Time Data
@@ -51,24 +61,21 @@ const MapComponent: React.FC = () => {
     const [isSimulated, setIsSimulated] = useState(false);
 
     // 4. Inputs & Persistence
-    const [startId, setStartId] = useState('84009'); // Default: Bedok
-    const [endId, setEndId] = useState('01012');   // Default: Victoria St
+    const [startId, setStartId] = useState('84009'); 
+    const [endId, setEndId] = useState('01012');   
     const [savedPlaces, setSavedPlaces] = useLocalStorage<SavedPlace[]>('singatransit_favs', []);
 
     const workerRef = useRef<Worker | null>(null);
 
     // --- EFFECT: Load Static Data ---
     useEffect(() => {
-        const loadData = async () => {
-            try {
-                const response = await axios.get('/data/stops_metadata.json');
-                setMetadata(response.data);
-                setStats(`Ready. Loaded ${Object.keys(response.data).length} stops.`);
-            } catch (error) {
-                setStats('Failed to load metadata.');
-            }
-        };
-        loadData();
+        fetch('/data/stops_metadata.json')
+            .then(res => res.json())
+            .then((data) => {
+                setMetadata(data);
+                setStats(`Ready. Loaded ${Object.keys(data).length} nodes.`);
+            })
+            .catch(() => setStats('Failed to load metadata.'));
     }, []);
 
     // --- EFFECT: Worker Setup ---
@@ -90,48 +97,116 @@ const MapComponent: React.FC = () => {
         return () => worker.terminate();
     }, [metadata]); 
 
+    // --- HELPERS: Color Mapping ---
+    const getServiceType = (service: string): 'BUS' | 'MRT' | 'LRT' | 'WALK' => {
+        if (service === 'WALK') return 'WALK';
+        const mrtLines = ['NSL', 'EWL', 'NEL', 'CCL', 'DTL', 'TEL'];
+        if (mrtLines.some(line => service.startsWith(line))) return 'MRT';
+        const lrtLines = ['BPLrt', 'SKLrt', 'PGLrt', 'LRT']; 
+        if (lrtLines.some(line => service.includes(line)) || service.endsWith('LRT')) return 'LRT';
+        return 'BUS';
+    };
+
+    const getLineColor = (service: string, type: string) => {
+        if (type === 'WALK') return '#7f8c8d'; // Grey
+        if (type === 'BUS') return '#2980b9';  // Blue
+
+        // MRT Official Colors
+        if (service.startsWith('NSL')) return '#d63031'; // Red (North South)
+        if (service.startsWith('EWL')) return '#009432'; // Green (East West)
+        if (service.startsWith('NEL')) return '#8e44ad'; // Purple (North East)
+        if (service.startsWith('CCL')) return '#fa8231'; // Orange (Circle)
+        if (service.startsWith('DTL')) return '#0984e3'; // Blue (Downtown)
+        if (service.startsWith('TEL')) return '#634206'; // Brown (Thomson)
+        
+        // LRT
+        if (type === 'LRT') return '#57606f'; // Dark Grey for LRT
+
+        return '#2980b9'; // Fallback Blue
+    };
+
     // --- HANDLERS ---
 
     const handleRouteSuccess = (path: any[], duration: number) => {
-        if (!metadata) return;
+        if (!metadata || path.length === 0) return;
         setStats(`Route Found! ~${Math.round(duration / 60)} mins.`);
 
-        // Draw Path
-        const coords: [number, number][] = [];
-        if (path.length > 0) {
-            const firstNode = metadata[path[0].from];
-            if (firstNode) coords.push([firstNode.lat, firstNode.lng]);
-        }
-        path.forEach(step => {
-            const node = metadata[step.to];
-            if (node) coords.push([node.lat, node.lng]);
-        });
-        setRoutePath(coords);
+        // --- NEW: BUILD POLYLINE SEGMENTS ---
+        const segments: RouteSegment[] = [];
+        let currentPoints: [number, number][] = [];
+        
+        // Initialize with first point
+        const startNode = metadata[path[0].from];
+        if (startNode) currentPoints.push([startNode.lat, startNode.lng]);
 
-        // Format
+        let currentService = path[0].service;
+        let currentType = getServiceType(currentService);
+
+        for (let i = 0; i < path.length; i++) {
+            const step = path[i];
+            const nextNode = metadata[step.to];
+            
+            if (!nextNode) continue;
+
+            const nextPoint: [number, number] = [nextNode.lat, nextNode.lng];
+            
+            // Check if service changed
+            if (step.service !== currentService) {
+                // 1. Push completed segment
+                if (currentPoints.length > 0) {
+                    segments.push({
+                        type: currentType,
+                        service: currentService,
+                        positions: currentPoints
+                    });
+                }
+
+                // 2. Start new segment
+                // Important: The new segment must start where the last one ended (visual continuity)
+                const lastPoint = currentPoints[currentPoints.length - 1];
+                currentPoints = [lastPoint, nextPoint]; // Start new line from previous point to current target
+                
+                currentService = step.service;
+                currentType = getServiceType(step.service);
+            } else {
+                // Continue same segment
+                currentPoints.push(nextPoint);
+            }
+        }
+
+        // Push final segment
+        if (currentPoints.length > 0) {
+            segments.push({
+                type: currentType,
+                service: currentService,
+                positions: currentPoints
+            });
+        }
+
+        setRouteSegments(segments);
+
+        // --- Format Instructions & Fetch Real-time ---
         const legs = formatRoute(path, metadata);
         setInstructions(legs);
         
-        // Fetch Real-time
-        if (legs.length > 0) {
+        if (legs.length > 0 && legs[0].type === 'BUS') {
             const firstLeg = legs[0];
-            const targetService = firstLeg.service;
-            
             fetchArrivals(firstLeg.startStopId).then(data => {
                 const safeData = data || [];
-                const hasTargetBus = safeData.some(s => s.ServiceNo === targetService);
-
-                if (safeData.length === 0 || !hasTargetBus) {
-                    setArrivalData(generateMockArrivals(targetService));
-                    setIsSimulated(true);
+                const hasTargetBus = safeData.some(s => s.ServiceNo === firstLeg.service);
+                if (!hasTargetBus) {
+                     setArrivalData(generateMockArrivals(firstLeg.service));
+                     setIsSimulated(true);
                 } else {
                     setArrivalData(safeData);
                     setIsSimulated(false);
                 }
             }).catch(() => {
-                setArrivalData(generateMockArrivals(targetService));
+                setArrivalData(generateMockArrivals(firstLeg.service));
                 setIsSimulated(true);
             });
+        } else {
+            setArrivalData([]);
         }
     };
 
@@ -139,7 +214,7 @@ const MapComponent: React.FC = () => {
         return [{
             ServiceNo: targetService,
             Operator: "SIM",
-            NextBus: { EstimatedArrival: new Date(Date.now() + 120000).toISOString(), Load: "SEA", Feature: "WAB", Type: "DD", OriginCode: "0", DestinationCode: "0", Latitude: "0", Longitude: "0", VisitNumber: "1" },
+            NextBus: { EstimatedArrival: new Date(Date.now() + 300000).toISOString(), Load: "SEA", Feature: "WAB", Type: "DD", OriginCode: "0", DestinationCode: "0", Latitude: "0", Longitude: "0", VisitNumber: "1" },
             NextBus2: { EstimatedArrival: "", Load: "", Feature: "", Type: "", OriginCode: "", DestinationCode: "", Latitude: "", Longitude: "", VisitNumber: "" },
             NextBus3: { EstimatedArrival: "", Load: "", Feature: "", Type: "", OriginCode: "", DestinationCode: "", Latitude: "", Longitude: "", VisitNumber: "" }
         }];
@@ -148,7 +223,7 @@ const MapComponent: React.FC = () => {
     const handleCalculate = () => {
         if (!workerRef.current) return;
         setStats('Calculating...');
-        setRoutePath([]);
+        setRouteSegments([]); // Clear map
         setInstructions([]); 
         setArrivalData([]); 
         setIsSimulated(false);
@@ -176,43 +251,39 @@ const MapComponent: React.FC = () => {
     };
 
     const loadPlace = (place: SavedPlace) => {
-        // Simple logic: If Start is empty, fill start. Else fill end.
         if (startId === '') setStartId(place.stopId);
         else setEndId(place.stopId);
     };
 
-    // --- RENDER ---
-
-    const getBadgeColor = (isSim: boolean, mins: number | null) => {
-        if (isSim) return '#d35400'; 
-        if (mins !== null) return '#27ae60'; 
-        return '#7f8c8d'; 
-    };
+    // --- RENDER HELPERS ---
+    
+    // Calculate start/end markers from segments
+    const startPos = routeSegments.length > 0 ? routeSegments[0].positions[0] : null;
+    const endPos = routeSegments.length > 0 
+        ? routeSegments[routeSegments.length - 1].positions[routeSegments[routeSegments.length - 1].positions.length - 1] 
+        : null;
 
     return (
         <div className="app-container">
-            {/* Responsive Sidebar */}
+            {/* Sidebar */}
             <div className="sidebar">
                 <div className="sidebar-content">
                     <h2 style={{ marginTop: 0 }}>SingaTransit</h2>
                     
                     <div className="input-group">
-                        <div style={{ display: 'flex', gap: '5px' }}>
-                            <div style={{ flex: 1 }}>
-                                <label style={{fontSize: '10px', color: '#aaa', display: 'block', marginBottom: '4px'}}>FROM</label>
-                                <div style={{ display: 'flex' }}>
-                                    <input className="dark-input" value={startId} onChange={(e) => setStartId(e.target.value)} />
-                                    <button onClick={() => saveCurrentPlace('start')} style={{background: 'none', border:'none', color:'#aaa', cursor:'pointer'}}>★</button>
-                                </div>
-                            </div>
-                            <div style={{ flex: 1 }}>
-                                <label style={{fontSize: '10px', color: '#aaa', display: 'block', marginBottom: '4px'}}>TO</label>
-                                <div style={{ display: 'flex' }}>
-                                    <input className="dark-input" value={endId} onChange={(e) => setEndId(e.target.value)} />
-                                    <button onClick={() => saveCurrentPlace('end')} style={{background: 'none', border:'none', color:'#aaa', cursor:'pointer'}}>★</button>
-                                </div>
-                            </div>
-                        </div>
+                        <LocationSearch 
+                            label="FROM" 
+                            initialValue={startId}
+                            onSelect={setStartId}
+                            onSave={() => saveCurrentPlace('start')}
+                        />
+                        
+                        <LocationSearch 
+                            label="TO" 
+                            initialValue={endId}
+                            onSelect={setEndId}
+                            onSave={() => saveCurrentPlace('end')}
+                        />
                         
                         <button className="action-btn" onClick={handleCalculate}>
                             Find Route
@@ -223,7 +294,7 @@ const MapComponent: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* DASHBOARD: SAVED PLACES (Show when no route active) */}
+                    {/* SAVED PLACES */}
                     {instructions.length === 0 && (
                         <div className="favorites-list">
                             <h3 style={{ borderBottom: '1px solid #444', paddingBottom: '5px', marginTop: 0 }}>Saved Places</h3>
@@ -233,7 +304,7 @@ const MapComponent: React.FC = () => {
                                 <div key={place.id} className="fav-item" onClick={() => loadPlace(place)}>
                                     <div>
                                         <div style={{fontWeight: 'bold', fontSize: '14px'}}>{place.label}</div>
-                                        <div style={{color: '#888', fontSize: '11px'}}>Stop {place.stopId}</div>
+                                        <div style={{color: '#888', fontSize: '11px'}}>{place.stopId}</div>
                                     </div>
                                     <button 
                                         onClick={(e) => deletePlace(place.id, e)}
@@ -246,36 +317,54 @@ const MapComponent: React.FC = () => {
                         </div>
                     )}
 
-                    {/* ACTIVE ROUTE INSTRUCTIONS */}
+                    {/* ITINERARY */}
                     {instructions.length > 0 && (
-                        <div>
+                        <div className="itinerary-list">
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                 <h3 style={{ margin: 0 }}>Itinerary</h3>
-                                <button onClick={() => { setInstructions([]); setRoutePath([]); }} style={{background: 'none', border: 'none', color: '#aaa', fontSize: '12px', cursor: 'pointer'}}>Close X</button>
+                                <button onClick={() => { setInstructions([]); setRouteSegments([]); }} style={{background: 'none', border: 'none', color: '#aaa', fontSize: '12px', cursor: 'pointer'}}>Close X</button>
                             </div>
                             
                             {instructions.map((leg, idx) => {
-                                const liveInfo = arrivalData.find(s => s.ServiceNo === leg.service);
                                 let nextBusMins: number | null = null;
-                                if (liveInfo && liveInfo.NextBus && liveInfo.NextBus.EstimatedArrival) {
-                                    nextBusMins = getMinutesToArrival(liveInfo.NextBus.EstimatedArrival);
+                                if (leg.type === 'BUS') {
+                                    const liveInfo = arrivalData.find(s => s.ServiceNo === leg.service);
+                                    if (liveInfo?.NextBus?.EstimatedArrival) {
+                                        nextBusMins = getMinutesToArrival(liveInfo.NextBus.EstimatedArrival);
+                                    }
                                 }
 
+                                // CSS color for the text based on mode
+                                const color = getLineColor(leg.service, leg.type);
+                                
                                 return (
-                                    <div key={idx} style={{ marginBottom: '15px', paddingLeft: '10px', borderLeft: '3px solid #2196F3' }}>
+                                    <div key={idx} style={{ marginBottom: '15px', paddingLeft: '10px', borderLeft: `4px solid ${color}` }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#2196F3' }}>Bus {leg.service}</div>
-                                            {idx === 0 && (
+                                            <div style={{ fontSize: '16px', fontWeight: 'bold', color: color }}>
+                                                {leg.type === 'WALK' ? 'Walk' : `${leg.type} ${leg.service}`}
+                                            </div>
+                                            
+                                            {leg.type === 'BUS' && (
                                                 <div style={{ 
                                                     fontSize: '11px', padding: '2px 6px', borderRadius: '4px',
-                                                    backgroundColor: getBadgeColor(isSimulated, nextBusMins), color: 'white'
+                                                    backgroundColor: isSimulated ? '#d35400' : (nextBusMins !== null ? '#27ae60' : '#7f8c8d'), 
+                                                    color: 'white'
                                                 }}>
                                                     {nextBusMins !== null ? `${nextBusMins} min` : 'No Data'}{isSimulated && ' (Sim)'}
                                                 </div>
                                             )}
                                         </div>
+                                        
                                         <div style={{ fontSize: '12px', color: '#ddd' }}>Board: {leg.startStopName}</div>
-                                        <div style={{ fontSize: '12px', color: '#888', margin: '4px 0' }}>↓ {leg.stopCount} stops</div>
+                                        {leg.type === 'WALK' ? (
+                                             <div style={{ fontSize: '11px', color: '#888', fontStyle: 'italic', margin: '4px 0' }}>
+                                                ~{Math.ceil(leg.duration / 60)} mins
+                                             </div>
+                                        ) : (
+                                            <div style={{ fontSize: '11px', color: '#888', margin: '4px 0' }}>
+                                                ↓ {leg.stopCount} stops (~{Math.ceil(leg.duration / 60)} mins)
+                                            </div>
+                                        )}
                                         <div style={{ fontSize: '12px', color: '#ddd' }}>Alight: {leg.endStopName}</div>
                                     </div>
                                 );
@@ -295,13 +384,37 @@ const MapComponent: React.FC = () => {
                     style={{ height: "100%", width: "100%" }}
                 >
                     <TileLayer attribution='&copy; OneMap' url="https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png" />
-                    {routePath.length > 0 && (
-                        <>
-                            <Polyline positions={routePath} color="#2196F3" weight={6} opacity={0.8} />
-                            <Marker position={routePath[0]}><Popup>Start</Popup></Marker>
-                            <Marker position={routePath[routePath.length - 1]}><Popup>End</Popup></Marker>
-                        </>
-                    )}
+                    
+                    {/* Render Segments */}
+                    {routeSegments.map((segment, index) => (
+                        <Polyline 
+                            key={index}
+                            positions={segment.positions}
+                            pathOptions={{
+                                color: getLineColor(segment.service, segment.type),
+                                weight: 6,
+                                opacity: 0.9,
+                                dashArray: segment.type === 'WALK' ? '5, 10' : undefined // Dotted line for walking
+                            }}
+                        />
+                    ))}
+
+                    {/* Start/End Markers */}
+                    {startPos && <Marker position={startPos}><Popup>Start</Popup></Marker>}
+                    {endPos && <Marker position={endPos}><Popup>End</Popup></Marker>}
+                    
+                    {/* Optional: Add small circles at transfer points */}
+                    {routeSegments.length > 1 && routeSegments.slice(0, -1).map((seg, i) => {
+                        const lastPos = seg.positions[seg.positions.length - 1];
+                        return (
+                            <CircleMarker 
+                                key={`transfer-${i}`} 
+                                center={lastPos} 
+                                radius={4} 
+                                pathOptions={{ color: 'white', fillColor: 'black', fillOpacity: 1, weight: 2 }} 
+                            />
+                        )
+                    })}
                 </MapContainer>
             </div>
         </div>
