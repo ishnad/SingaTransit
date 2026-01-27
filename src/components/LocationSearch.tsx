@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { searchOneMap, type OneMapResult } from '../services/ltaService';
+import { searchOneMap } from '../services/ltaService';
 
 interface Station {
     id: string;
