@@ -42,3 +42,29 @@ export const getMinutesToArrival = (isoString: string): number => {
     const minutes = Math.floor(diffMs / 60000);
     return minutes < 0 ? 0 : minutes;
 };
+
+export interface OneMapResult {
+    SEARCHVAL: string;
+    ADDRESS: string;
+    LATITUDE: string;
+    LONGITUDE: string;
+}
+
+export const searchOneMap = async (query: string): Promise<OneMapResult[]> => {
+  if (!query || query.length < 2) return [];
+  try {
+    const response = await axios.get('/api/onemap-proxy', {
+      params: {
+        searchVal: query,
+        returnGeom: 'Y',
+        getAddrDetails: 'Y',
+        pageNum: 1
+      }
+    });
+    console.log(`[OneMap Search] Query: "${query}", Results: ${response.data.results?.length || 0}`);
+    return response.data.results || [];
+  } catch (error) {
+    console.error("Failed to search OneMap:", error);
+    return [];
+  }
+};

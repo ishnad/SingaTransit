@@ -47,7 +47,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '/lta-api': {
-          target: 'https://datamall2.mytransport.sg', 
+          target: 'https://datamall2.mytransport.sg',
           changeOrigin: true,
           secure: false,
           rewrite: (path) => path.replace(/^\/lta-api/, '/ltaodataservice'),
@@ -60,6 +60,21 @@ export default defineConfig(({ mode }) => {
               console.log('❌ Proxy Error:', err);
             });
             // Removed unused 'proxyRes' listener to fix build error
+          }
+        },
+        '/api/onemap-proxy': {
+          target: 'https://www.onemap.gov.sg',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/api\/onemap-proxy/, '/api/common/elastic/search'),
+          headers: {
+            'accept': 'application/json',
+            ...(env.ONEMAP_ACCESS_TOKEN && { 'Authorization': `Bearer ${env.ONEMAP_ACCESS_TOKEN}` })
+          },
+          configure: (proxy, _options) => {
+            proxy.on('error', (err, _req, _res) => {
+              console.log('❌ OneMap Proxy Error:', err);
+            });
           }
         }
       }

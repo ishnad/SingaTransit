@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { searchOneMap, type OneMapResult } from '../services/ltaService';
 
 interface Station {
     id: string;
     name: string;
     road: string;
-    type: 'BUS' | 'MRT' | 'LRT';
+    type: 'BUS' | 'MRT' | 'LRT' | 'PLACE';
+    lat?: number;
+    lng?: number;
 }
 
 interface Metadata {
@@ -69,23 +72,47 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ label, initialVa
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // Filter Logic
+    // Filter Logic + OneMap Search
     useEffect(() => {
-        if (query.length < 2) {
-            setSuggestions([]);
-            return;
-        }
+        const fetchSuggestions = async () => {
+            if (query.length < 2) {
+                setSuggestions([]);
+                return;
+            }
 
-        const lowerQuery = query.toLowerCase();
-        const results = stations
-            .filter(s => 
-                s.name.toLowerCase().includes(lowerQuery) || 
-                s.id.toLowerCase().includes(lowerQuery) ||
-                s.road.toLowerCase().includes(lowerQuery)
-            )
-            .slice(0, 50); // Performance limit
+            const lowerQuery = query.toLowerCase();
+            
+            // 1. Filter local stations
+            const localMatches = stations
+                .filter(s =>
+                    s.name.toLowerCase().includes(lowerQuery) ||
+                    s.id.toLowerCase().includes(lowerQuery) ||
+                    s.road.toLowerCase().includes(lowerQuery)
+                );
 
-        setSuggestions(results);
+            // 2. Fetch from OneMap if query looks like a place/postal code
+            // (Only if we don't have too many local matches, or always?)
+            let placeMatches: Station[] = [];
+            try {
+                const oneMapResults = await searchOneMap(query);
+                placeMatches = oneMapResults.map(res => ({
+                    id: `place:${res.LATITUDE},${res.LONGITUDE}:${res.SEARCHVAL}`,
+                    name: res.SEARCHVAL,
+                    road: res.ADDRESS,
+                    type: 'PLACE',
+                    lat: parseFloat(res.LATITUDE),
+                    lng: parseFloat(res.LONGITUDE)
+                }));
+            } catch (err) {
+                console.error("OneMap search failed", err);
+            }
+
+            const combined = [...localMatches, ...placeMatches].slice(0, 50);
+            setSuggestions(combined);
+        };
+
+        const timer = setTimeout(fetchSuggestions, 300); // Debounce
+        return () => clearTimeout(timer);
     }, [query, stations]);
 
     const handleSelect = (station: Station) => {
@@ -98,12 +125,13 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ label, initialVa
         switch(type) {
             case 'MRT': return '#e74c3c'; // Red
             case 'LRT': return '#8e44ad'; // Purple
+            case 'PLACE': return '#27ae60'; // Green
             default: return '#3498db';    // Blue
         }
     };
 
     return (
-        <div ref={wrapperRef} style={{ marginBottom: '10px', position: 'relative' }}>
+        <div ref={wrapperRef} style={{ marginBottom: '10px', position: 'relative', width: '100%' }}>
             <label style={{ fontSize: '10px', color: '#aaa', display: 'block', marginBottom: '4px' }}>
                 {label}
             </label>
@@ -116,7 +144,7 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ label, initialVa
                         setShowDropdown(true);
                     }}
                     onFocus={() => setShowDropdown(true)}
-                    placeholder="Search location..."
+                    placeholder="Search places, postal codes, stops..."
                     style={{ flex: 1 }}
                 />
                 {onSave && (

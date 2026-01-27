@@ -36,7 +36,15 @@ interface Metadata {
 interface SavedPlace {
     id: string;
     stopId: string;
-    label: string; 
+    label: string;
+}
+
+interface CustomLocation {
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    road: string;
 }
 
 // New Interface for Map Segments
@@ -61,9 +69,10 @@ const MapComponent: React.FC = () => {
     const [isSimulated, setIsSimulated] = useState(false);
 
     // 4. Inputs & Persistence
-    const [startId, setStartId] = useState('84009'); 
-    const [endId, setEndId] = useState('01012');   
+    const [startId, setStartId] = useState('84009');
+    const [endId, setEndId] = useState('01012');
     const [savedPlaces, setSavedPlaces] = useLocalStorage<SavedPlace[]>('singatransit_favs', []);
+    const [customLocations, setCustomLocations] = useState<Record<string, CustomLocation>>({});
 
     const workerRef = useRef<Worker | null>(null);
 
@@ -224,10 +233,39 @@ const MapComponent: React.FC = () => {
         if (!workerRef.current) return;
         setStats('Calculating...');
         setRouteSegments([]); // Clear map
-        setInstructions([]); 
-        setArrivalData([]); 
+        setInstructions([]);
+        setArrivalData([]);
         setIsSimulated(false);
-        workerRef.current.postMessage({ type: 'CALCULATE', payload: { start: startId, end: endId } });
+        
+        // Determine if start/end are custom place IDs
+        const startNode = startId.startsWith('place:') ? findNearestStop(startId) : startId;
+        const endNode = endId.startsWith('place:') ? findNearestStop(endId) : endId;
+        
+        workerRef.current.postMessage({ type: 'CALCULATE', payload: { start: startNode, end: endNode } });
+    };
+
+    const findNearestStop = (placeId: string): string => {
+        // Extract lat/lng from placeId
+        const match = placeId.match(/place:([\d\.]+),([\d\.]+):/);
+        if (!match || !metadata) return '01012'; // fallback
+        
+        const lat = parseFloat(match[1]);
+        const lng = parseFloat(match[2]);
+        
+        let nearestId = '';
+        let nearestDist = Infinity;
+        
+        for (const [id, node] of Object.entries(metadata)) {
+            const dx = node.lat - lat;
+            const dy = node.lng - lng;
+            const dist = dx * dx + dy * dy; // squared distance
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearestId = id;
+            }
+        }
+        
+        return nearestId || '01012';
     };
 
     const saveCurrentPlace = (type: 'start' | 'end') => {
@@ -271,17 +309,54 @@ const MapComponent: React.FC = () => {
                     <h2 style={{ marginTop: 0 }}>SingaTransit</h2>
                     
                     <div className="input-group">
-                        <LocationSearch 
-                            label="FROM" 
+                        <LocationSearch
+                            label="FROM"
                             initialValue={startId}
-                            onSelect={setStartId}
+                            onSelect={(id) => {
+                                setStartId(id);
+                                // If it's a custom place, store its coordinates
+                                if (id.startsWith('place:')) {
+                                    const match = id.match(/place:([\d\.]+),([\d\.]+):(.+)/);
+                                    if (match) {
+                                        const [, lat, lng, name] = match;
+                                        setCustomLocations(prev => ({
+                                            ...prev,
+                                            [id]: {
+                                                id,
+                                                name,
+                                                lat: parseFloat(lat),
+                                                lng: parseFloat(lng),
+                                                road: ''
+                                            }
+                                        }));
+                                    }
+                                }
+                            }}
                             onSave={() => saveCurrentPlace('start')}
                         />
                         
-                        <LocationSearch 
-                            label="TO" 
+                        <LocationSearch
+                            label="TO"
                             initialValue={endId}
-                            onSelect={setEndId}
+                            onSelect={(id) => {
+                                setEndId(id);
+                                if (id.startsWith('place:')) {
+                                    const match = id.match(/place:([\d\.]+),([\d\.]+):(.+)/);
+                                    if (match) {
+                                        const [, lat, lng, name] = match;
+                                        setCustomLocations(prev => ({
+                                            ...prev,
+                                            [id]: {
+                                                id,
+                                                name,
+                                                lat: parseFloat(lat),
+                                                lng: parseFloat(lng),
+                                                road: ''
+                                            }
+                                        }));
+                                    }
+                                }
+                            }}
                             onSave={() => saveCurrentPlace('end')}
                         />
                         
@@ -402,6 +477,21 @@ const MapComponent: React.FC = () => {
                     {/* Start/End Markers */}
                     {startPos && <Marker position={startPos}><Popup>Start</Popup></Marker>}
                     {endPos && <Marker position={endPos}><Popup>End</Popup></Marker>}
+                    
+                    {/* Custom Location Markers */}
+                    {Object.values(customLocations).map(loc => (
+                        <Marker
+                            key={loc.id}
+                            position={[loc.lat, loc.lng]}
+                            icon={L.divIcon({
+                                html: `<div style="background-color: #27ae60; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
+                                iconSize: [16, 16],
+                                className: 'custom-location-marker'
+                            })}
+                        >
+                            <Popup>{loc.name}</Popup>
+                        </Marker>
+                    ))}
                     
                     {/* Optional: Add small circles at transfer points */}
                     {routeSegments.length > 1 && routeSegments.slice(0, -1).map((seg, i) => {
