@@ -1,0 +1,3086 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: **/.venv/**, **/node_modules/**, **/dist/**, **/.git/**, **/package-lock.json, **/yarn.lock, **/*.png, **/*.jpg, **/*.svg, **/*.ico
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.env.example
+.gitattributes
+.gitignore
+api/lta-proxy.js
+api/onemap-proxy.js
+eslint.config.js
+index.html
+package.json
+public/data/lrt_stations.json
+public/data/mrt_stations.json
+public/data/stops_metadata.json
+public/data/transit_graph.json
+README.md
+scripts/temp_data_insert.py
+scripts/transit_graph_builder.py
+src/App.css
+src/App.tsx
+src/components/LocationSearch.tsx
+src/components/MapComponent.tsx
+src/components/RouteList/RouteCard.tsx
+src/components/RouteList/RouteList.tsx
+src/components/RouteOptions/__tests__/ModeFilterChips.test.tsx
+src/components/RouteOptions/__tests__/SortDropdown.test.tsx
+src/components/RouteOptions/ModeFilterChips.tsx
+src/components/RouteOptions/RouteOptionsBar.tsx
+src/components/RouteOptions/SortDropdown.tsx
+src/hooks/useLocalStorage.ts
+src/index.css
+src/main.tsx
+src/services/ltaService.ts
+src/test/setup.ts
+src/types/transport.ts
+src/utils/__tests__/routeUtils.test.ts
+src/utils/MinHeap.ts
+src/utils/routeFormatter.ts
+src/utils/routeProcessor.ts
+src/utils/routeUtils.ts
+src/utils/transportUtils.ts
+src/workers/pathfinder.worker.ts
+tsconfig.app.json
+tsconfig.json
+tsconfig.node.json
+vite.config.ts
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/components/RouteList/RouteCard.tsx">
+import React from 'react';
+import type { ProcessedRoute, TripLeg } from '../../types/transport';
+import type { ServiceArrival } from '../../services/ltaService';
+import { getMinutesToArrival } from '../../services/ltaService';
+
+interface RouteCardProps {
+  route: ProcessedRoute;
+  isSelected: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+  arrivalData: ServiceArrival[];
+  isSimulated?: boolean;
+}
+
+export const RouteCard: React.FC<RouteCardProps> = ({ 
+  route, 
+  isSelected, 
+  isExpanded, 
+  onToggle, 
+  arrivalData, 
+  isSimulated 
+}) => {
+  
+  // Helper to render the badges in the header
+  const renderModeBadges = () => {
+    return route.summary.modes.map((mode, idx) => (
+       <span key={idx} className={`mini-badge mode-${mode.toLowerCase()}`}>
+         {mode}
+       </span>
+    ));
+  };
+
+  return (
+    <div 
+      className={`route-card ${isSelected ? 'selected' : ''} ${isExpanded ? 'expanded' : ''}`}
+      onClick={onToggle}
+    >
+      {/* HEADER */}
+      <div className="route-card-header">
+        <div className="header-top">
+          <div className="duration-info">
+            <span className="duration-mins">{route.summary.duration} min</span>
+            <span className="arrival-time">{route.summary.arrivalTime}</span>
+          </div>
+          <div className="mode-icons">
+             {renderModeBadges()}
+          </div>
+        </div>
+        
+        <div className="header-sub">
+            <span className="route-label">{route.raw.label || 'Recommended'}</span>
+            <span className="transfers">
+                {route.summary.transferCount === 0 ? 'Direct' : `${route.summary.transferCount} Transfers`}
+            </span>
+        </div>
+      </div>
+
+      {/* BODY (Accordion) */}
+      <div className={`route-card-body ${isExpanded ? 'open' : ''}`}>
+        <div className="body-content">
+            {route.legs.map((leg, idx) => (
+                <LegItem 
+                    key={idx} 
+                    leg={leg} 
+                    isFirst={idx === 0}
+                    arrivalData={arrivalData} 
+                    isSimulated={isSimulated} 
+                />
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Sub-component for individual steps
+const LegItem: React.FC<{ leg: TripLeg; isFirst: boolean; arrivalData: ServiceArrival[]; isSimulated?: boolean }> = ({ 
+    leg, isFirst, arrivalData, isSimulated 
+}) => {
+    let nextBusMins: number | null = null;
+    let color = '#7f8c8d'; // default grey for WALK
+
+    // Determine Color
+    if (leg.type === 'MRT') color = '#e74c3c'; // Red (Generic MRT) - In real app, match line color
+    if (leg.type === 'LRT') color = '#8e44ad';
+    if (leg.type === 'BUS') color = '#2980b9';
+
+    // Get Live Data for First Leg
+    if (leg.type === 'BUS' && isFirst) {
+        const liveInfo = arrivalData.find(s => s.ServiceNo === leg.service);
+        if (liveInfo?.NextBus?.EstimatedArrival) {
+            nextBusMins = getMinutesToArrival(liveInfo.NextBus.EstimatedArrival);
+        }
+    }
+
+    return (
+        <div className="leg-item" style={{ borderLeftColor: color }}>
+            <div className="leg-header">
+                <span className="leg-service" style={{ color: color }}>
+                    {leg.type === 'WALK' ? 'Walk' : leg.service}
+                </span>
+                
+                {leg.type === 'BUS' && isFirst && (
+                    <span className={`live-badge ${isSimulated ? 'sim' : ''} ${nextBusMins !== null ? 'live' : ''}`}>
+                        {isSimulated ? 'Sim' : (nextBusMins !== null ? `${nextBusMins} min` : 'No Data')}
+                    </span>
+                )}
+            </div>
+            
+            <div className="leg-desc">
+                {leg.type === 'WALK' 
+                    ? `Walk to ${leg.endStopName}`
+                    : `Board at ${leg.startStopName}`
+                }
+            </div>
+            
+            {leg.type !== 'WALK' && (
+                <div className="leg-sub">
+                    Alight at {leg.endStopName} ({leg.stopCount} stops)
+                </div>
+            )}
+        </div>
+    );
+};
+</file>
+
+<file path="src/components/RouteList/RouteList.tsx">
+import React from 'react';
+import { RouteCard } from './RouteCard';
+import type { ProcessedRoute } from '../../types/transport';
+import type { ServiceArrival } from '../../services/ltaService';
+
+interface RouteListProps {
+  routes: ProcessedRoute[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  arrivalData: ServiceArrival[];
+  isSimulated?: boolean;
+}
+
+export const RouteList: React.FC<RouteListProps> = ({ 
+  routes, 
+  selectedId, 
+  onSelect, 
+  arrivalData, 
+  isSimulated 
+}) => {
+  
+  if (!routes || routes.length === 0) {
+    return <div style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No routes found.</div>;
+  }
+
+  return (
+    <div className="route-list-container">
+      {routes.map((route) => (
+        <RouteCard
+          key={route.id}
+          route={route}
+          isSelected={route.id === selectedId}
+          isExpanded={route.id === selectedId} // Auto-expand selected, collapse others
+          onToggle={() => onSelect(route.id)}
+          arrivalData={arrivalData}
+          isSimulated={isSimulated}
+        />
+      ))}
+    </div>
+  );
+};
+</file>
+
+<file path="src/components/RouteOptions/__tests__/ModeFilterChips.test.tsx">
+import { render, screen, fireEvent } from '@testing-library/react';
+import { ModeFilterChips } from '../ModeFilterChips';
+import { vi } from 'vitest';
+
+test('toggles mode exclusion on click', () => {
+  const mockToggle = vi.fn();
+  const excluded = new Set<any>([]); // Nothing excluded initially
+  
+  render(<ModeFilterChips excludedModes={excluded} onToggleMode={mockToggle} />);
+  
+  const busChip = screen.getByText('Bus');
+  fireEvent.click(busChip);
+  
+  expect(mockToggle).toHaveBeenCalledWith('BUS');
+});
+</file>
+
+<file path="src/components/RouteOptions/__tests__/SortDropdown.test.tsx">
+import { render, screen, fireEvent } from '@testing-library/react';
+import { SortDropdown } from '../SortDropdown';
+import { vi } from 'vitest';
+
+test('calls onSelect when an option is selected', () => {
+  const mockSelect = vi.fn();
+  render(<SortDropdown activeSort="FASTEST" onSelect={mockSelect} />);
+  
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'LESS_TRANSFERS' } });
+  
+  expect(mockSelect).toHaveBeenCalledWith('LESS_TRANSFERS');
+});
+</file>
+
+<file path="src/components/RouteOptions/ModeFilterChips.tsx">
+import React from 'react';
+import { TRANSPORT_MODES } from '../../types/transport';
+import type { TransportMode } from '../../types/transport';
+
+interface Props {
+  excludedModes: Set<TransportMode>;
+  onToggleMode: (mode: TransportMode) => void;
+}
+
+export const ModeFilterChips: React.FC<Props> = ({ excludedModes, onToggleMode }) => {
+  return (
+    <div className="mode-filter-chips">
+      {TRANSPORT_MODES.map(mode => {
+        // A mode is active if it is NOT in the excluded set
+        const isActive = !excludedModes.has(mode.id);
+        return (
+          <button
+            key={mode.id}
+            onClick={() => onToggleMode(mode.id)}
+            className={`chip ${isActive ? 'active' : 'inactive'}`}
+            aria-pressed={isActive}
+            aria-label={`Toggle ${mode.label}`}
+          >
+            {mode.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+</file>
+
+<file path="src/components/RouteOptions/RouteOptionsBar.tsx">
+import React from 'react';
+import { SortDropdown } from './SortDropdown';
+import { ModeFilterChips } from './ModeFilterChips';
+import type { SortOption, TransportMode } from '../../types/transport';
+
+interface Props {
+  activeSort: SortOption;
+  excludedModes: Set<TransportMode>;
+  onSortChange: (sort: SortOption) => void;
+  onModeToggle: (mode: TransportMode) => void;
+}
+
+export const RouteOptionsBar: React.FC<Props> = ({ activeSort, excludedModes, onSortChange, onModeToggle }) => {
+  return (
+    <div className="route-options-bar" style={{ marginBottom: '15px' }}>
+      <div className="sort-section" style={{ marginBottom: '10px', display: 'flex', alignItems: 'center' }}>
+        <span className="label" style={{ marginRight: '10px', fontSize: '12px', color: '#aaa' }}>Sort by:</span>
+        <SortDropdown activeSort={activeSort} onSelect={onSortChange} />
+      </div>
+      <div className="filter-section">
+        <ModeFilterChips excludedModes={excludedModes} onToggleMode={onModeToggle} />
+      </div>
+    </div>
+  );
+};
+</file>
+
+<file path="src/components/RouteOptions/SortDropdown.tsx">
+import React from 'react';
+import { SORT_OPTIONS } from '../../types/transport';
+import type { SortOption } from '../../types/transport';
+
+interface Props {
+  activeSort: SortOption;
+  onSelect: (option: SortOption) => void;
+}
+
+export const SortDropdown: React.FC<Props> = ({ activeSort, onSelect }) => {
+  return (
+    <select 
+      role="combobox"
+      value={activeSort} 
+      onChange={(e) => onSelect(e.target.value as SortOption)}
+      className="sort-dropdown"
+      aria-label="Sort routes"
+    >
+      {SORT_OPTIONS.map(opt => (
+        <option key={opt.id} value={opt.id}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
+  );
+};
+</file>
+
+<file path="src/test/setup.ts">
+import '@testing-library/jest-dom';
+</file>
+
+<file path="src/types/transport.ts">
+export type TransportMode = 'BUS' | 'MRT' | 'LRT' | 'TRAIN' | 'TRAM' | 'WALK';
+
+export const TRANSPORT_MODES = [
+  { id: 'BUS', label: 'Bus' },
+  { id: 'SUBWAY', label: 'Subway' }, // Keeping original IDs if they were SUBWAY/TRAIN in your code, otherwise aligning to MRT/LRT
+  { id: 'TRAIN', label: 'Train' },
+  { id: 'TRAM', label: 'Tram' },
+] as const;
+
+export type SortOption = 'FASTEST' | 'LESS_TRANSFERS' | 'LESS_WALKING';
+
+export const SORT_OPTIONS = [
+  { id: 'FASTEST', label: 'Fastest' },
+  { id: 'LESS_TRANSFERS', label: 'Less Transfers' },
+  { id: 'LESS_WALKING', label: 'Less Walking' },
+] as const;
+
+export interface RouteSegment {
+  mode: TransportMode; // or string if dynamic
+  service: string;
+  duration?: number; // in seconds
+  distance?: number; // in meters
+  positions: [number, number][]; // Lat/Lng array for map
+  type?: string; // Legacy support if needed
+}
+
+export interface Route {
+  id: string;
+  segments: RouteSegment[];
+  totalDuration: number;
+  totalDistance: number;
+  numberOfTransfers: number;
+  walkingDistance: number;
+}
+
+// --- NEW TYPES FOR UNIFIED ROUTE LIST ---
+
+export interface Metadata {
+  [key: string]: {
+    name: string;
+    road: string;
+    type?: 'BUS' | 'MRT' | 'LRT';
+    lat: number;
+    lng: number;
+  };
+}
+
+// Previously in routeFormatter.ts
+export interface TripLeg {
+  type: 'BUS' | 'MRT' | 'LRT' | 'WALK';
+  service: string;
+  startStopId: string;
+  startStopName: string;
+  endStopId: string;
+  endStopName: string;
+  stopCount: number;
+  duration: number; // in seconds
+}
+
+// Raw output from the Pathfinder Worker
+export interface PathStep {
+  from: string;
+  to: string;
+  service: string;
+  weight: number;
+  direction?: number;
+}
+
+export interface RouteOption {
+  id: string;
+  label: string; // e.g., "Fastest", "Less Transfers"
+  path: PathStep[];
+  totalDuration: number;
+}
+
+export interface RouteSummary {
+  duration: number; // Minutes
+  arrivalTime: string; // "14:35"
+  modes: string[]; // ["BUS", "MRT"] unique list for icons
+  transferCount: number;
+  cost?: number; // Optional
+}
+
+export interface ProcessedRoute {
+  id: string;
+  summary: RouteSummary;
+  legs: TripLeg[]; // For the text itinerary
+  segments: RouteSegment[]; // For the map polylines
+  raw: RouteOption; // Keep original reference
+}
+</file>
+
+<file path="src/utils/__tests__/routeUtils.test.ts">
+import { filterAndSortRoutes } from '../routeUtils';
+import type { Route, TransportMode, SortOption } from '../../types/transport';
+
+// Mock Data
+const trainRoute: Route = { 
+  id: '1', 
+  segments: [{ mode: 'TRAIN', duration: 100, distance: 1000 }], 
+  totalDuration: 100, 
+  totalDistance: 1000, 
+  numberOfTransfers: 0, 
+  walkingDistance: 500 
+};
+
+const busRoute: Route = { 
+  id: '2', 
+  segments: [{ mode: 'BUS', duration: 200, distance: 2000 }], 
+  totalDuration: 200, 
+  totalDistance: 2000, 
+  numberOfTransfers: 1, 
+  walkingDistance: 100 
+};
+
+describe('filterAndSortRoutes', () => {
+  it('should filter out routes containing excluded modes', () => {
+    const routes = [trainRoute, busRoute];
+    const excludedModes = new Set<TransportMode>(['BUS']);
+    const sortOption: SortOption = 'FASTEST';
+
+    const result = filterAndSortRoutes(routes, excludedModes, sortOption);
+    
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('1'); // Should keep train
+  });
+
+  it('should sort by LESS_TRANSFERS', () => {
+    const routeA = { ...trainRoute, numberOfTransfers: 2, totalDuration: 10 };
+    const routeB = { ...busRoute, numberOfTransfers: 1, totalDuration: 20 };
+    
+    // Note: trainRoute (A) has 2 transfers, busRoute (B) has 1
+    const result = filterAndSortRoutes([routeA, routeB], new Set(), 'LESS_TRANSFERS');
+    
+    expect(result[0].id).toBe('2'); // RouteB (1 transfer) comes before RouteA (2 transfers)
+  });
+
+   it('should sort by LESS_WALKING', () => {
+    // trainRoute has 500m walking, busRoute has 100m walking
+    const result = filterAndSortRoutes([trainRoute, busRoute], new Set(), 'LESS_WALKING');
+    
+    expect(result[0].id).toBe('2'); // busRoute (100m) comes before trainRoute (500m)
+  });
+
+  it('should sort by FASTEST', () => {
+    // trainRoute duration 100, busRoute duration 200
+    const result = filterAndSortRoutes([trainRoute, busRoute], new Set(), 'FASTEST');
+    
+    expect(result[0].id).toBe('1');
+  });
+});
+</file>
+
+<file path="src/utils/routeProcessor.ts">
+import { formatRoute } from './routeFormatter';
+import { getServiceType } from './transportUtils';
+import type { RouteOption, ProcessedRoute, Metadata, RouteSegment, PathStep } from '../types/transport';
+
+export const processRoutes = (rawRoutes: RouteOption[], metadata: Metadata): ProcessedRoute[] => {
+  return rawRoutes.map((route) => {
+    // 1. Generate Text Instructions (Legs)
+    const legs = formatRoute(route.path, metadata);
+
+    // 2. Generate Map Segments (Polylines)
+    const segments = generateSegments(route.path, metadata);
+
+    // 3. Generate Summary
+    const durationMins = Math.ceil(route.totalDuration / 60);
+    
+    // Calculate Arrival Time (now + duration)
+    const arrivalDate = new Date(new Date().getTime() + route.totalDuration * 1000);
+    const arrivalTime = arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // Extract unique modes for icons (excluding WALK usually, or keeping it)
+    const modes = Array.from(new Set(legs.map(l => l.type).filter(t => t !== 'WALK')));
+    
+    // Count transfers (legs - 1, but strictly transit legs?)
+    // Using legs.length - 1 excludes the initial start, but if walking is involved it might be accurate.
+    // A better metric might be number of non-walk legs minus 1? 
+    // For now, let's just say number of transit legs.
+    const transitLegs = legs.filter(l => l.type !== 'WALK').length;
+    const transferCount = Math.max(0, transitLegs - 1);
+
+    return {
+      id: route.id,
+      raw: route,
+      legs,
+      segments,
+      summary: {
+        duration: durationMins,
+        arrivalTime,
+        modes,
+        transferCount
+      }
+    };
+  });
+};
+
+// Helper: Extracted from MapComponent to generate polyline segments
+const generateSegments = (path: PathStep[], metadata: Metadata): RouteSegment[] => {
+  if (!path || path.length === 0) return [];
+
+  const segments: RouteSegment[] = [];
+  
+  // Initialize with the starting point of the first step
+  const firstNode = metadata[path[0].from];
+  if (!firstNode) return [];
+
+  let currentService = path[0].service;
+  let currentPoints: [number, number][] = [[firstNode.lat, firstNode.lng]];
+  let currentType = getServiceType(currentService);
+
+  for (let i = 0; i < path.length; i++) {
+    const step = path[i];
+    const nextNode = metadata[step.to];
+    
+    if (!nextNode) continue;
+
+    const nextPoint: [number, number] = [nextNode.lat, nextNode.lng];
+
+    if (step.service !== currentService) {
+      // Service changed, finalize current segment
+      if (currentPoints.length > 0) {
+        segments.push({
+          type: currentType, // 'BUS', 'MRT', etc.
+          mode: currentType as any, // mapping string to TransportMode
+          service: currentService,
+          positions: currentPoints
+        });
+      }
+
+      // Start new segment
+      // The start of the new segment is the end of the last one (continuity)
+      // We grab the last point of the previous segment or the start of this step
+      const startNode = metadata[step.from];
+      const startPoint: [number, number] = startNode ? [startNode.lat, startNode.lng] : nextPoint; // Fallback
+
+      currentService = step.service;
+      currentType = getServiceType(currentService);
+      currentPoints = [startPoint, nextPoint];
+    } else {
+      // Continue same service
+      currentPoints.push(nextPoint);
+    }
+  }
+
+  // Push final segment
+  if (currentPoints.length > 0) {
+    segments.push({
+      type: currentType,
+      mode: currentType as any,
+      service: currentService,
+      positions: currentPoints
+    });
+  }
+
+  return segments;
+};
+</file>
+
+<file path="src/utils/routeUtils.ts">
+import type { Route, TransportMode, SortOption } from '../types/transport';
+
+export const filterAndSortRoutes = (
+  routes: Route[],
+  excludedModes: Set<TransportMode>,
+  sortOption: SortOption
+): Route[] => {
+  // 1. Filter: Remove routes that contain any excluded mode
+  // Note: Walking segments are ignored during filtering (always allowed)
+  const filtered = routes.filter(route => {
+    return !route.segments.some(segment => 
+      segment.mode !== 'WALKING' && excludedModes.has(segment.mode as TransportMode)
+    );
+  });
+
+  // 2. Sort: Order routes based on the selected option
+  return filtered.sort((a, b) => {
+    switch (sortOption) {
+      case 'LESS_TRANSFERS':
+        // Primary: Number of transfers (Ascending)
+        if (a.numberOfTransfers !== b.numberOfTransfers) {
+          return a.numberOfTransfers - b.numberOfTransfers;
+        }
+        // Secondary: Duration (Ascending)
+        return a.totalDuration - b.totalDuration;
+
+      case 'LESS_WALKING':
+        // Primary: Walking distance (Ascending)
+        if (a.walkingDistance !== b.walkingDistance) {
+          return a.walkingDistance - b.walkingDistance;
+        }
+        // Secondary: Duration (Ascending)
+        return a.totalDuration - b.totalDuration;
+
+      case 'FASTEST':
+      default:
+        // Primary: Total Duration (Ascending)
+        return a.totalDuration - b.totalDuration;
+    }
+  });
+};
+</file>
+
+<file path="src/utils/transportUtils.ts">
+// src/utils/transportUtils.ts
+
+/**
+ * Determines the mode of transport based on the service name/code.
+ * Shared between UI (MapComponent) and Worker (Pathfinder).
+ */
+export const getServiceType = (service: string): 'BUS' | 'MRT' | 'LRT' | 'WALK' => {
+    if (service === 'WALK') return 'WALK';
+    
+    // MRT Lines (North South, East West, North East, Circle, Downtown, Thomson-East Coast)
+    const mrtLines = ['NSL', 'EWL', 'NEL', 'CCL', 'DTL', 'TEL'];
+    if (mrtLines.some(line => service.startsWith(line))) return 'MRT';
+    
+    // LRT Lines (Bukit Panjang, Sengkang, Punggol)
+    const lrtLines = ['BPLrt', 'SKLrt', 'PGLrt', 'LRT']; 
+    if (lrtLines.some(line => service.includes(line)) || service.endsWith('LRT')) return 'LRT';
+    
+    return 'BUS';
+};
+</file>
+
+<file path=".gitattributes">
+# Auto detect text files and perform LF normalization
+* text=auto
+</file>
+
+<file path="api/lta-proxy.js">
+export default async function handler(req, res) {
+  // 1. Get the query parameter (BusStopCode)
+  const { BusStopCode } = req.query;
+  
+  if (!BusStopCode) {
+    return res.status(400).json({ error: 'BusStopCode is required' });
+  }
+
+  // 2. Retrieve the API Key from Vercel Environment Variables
+  const apiKey = process.env.LTA_DATAMALL_API_KEY;
+
+  if (!apiKey) {
+    return res.status(500).json({ error: 'Server API Key missing' });
+  }
+
+  // 3. Forward the request to LTA
+  try {
+    const ltaResponse = await fetch(
+      `https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival?BusStopCode=${BusStopCode}`,
+      {
+        headers: {
+          'AccountKey': apiKey,
+          'accept': 'application/json'
+        }
+      }
+    );
+
+    if (!ltaResponse.ok) {
+      throw new Error(`LTA API Error: ${ltaResponse.status}`);
+    }
+
+    const data = await ltaResponse.json();
+    
+    // 4. Return data to your frontend
+    return res.status(200).json(data);
+    
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+</file>
+
+<file path="api/onemap-proxy.js">
+export default async function handler(req, res) {
+  const { searchVal } = req.query;
+  
+  if (!searchVal) {
+    return res.status(400).json({ error: 'searchVal is required' });
+  }
+
+  const token = process.env.ONEMAP_ACCESS_TOKEN;
+  console.log(`[OneMap Proxy] Searching: "${searchVal}", token present: ${!!token}`);
+
+  try {
+    // OneMap API requires returnGeom parameter - ensure it's included
+    const url = `https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(searchVal)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
+    console.log(`[OneMap Proxy] Fetching: ${url}`);
+    
+    const headers = {
+      'accept': 'application/json'
+    };
+    
+    // Add Authorization header only if token exists
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await fetch(url, { headers });
+
+    console.log(`[OneMap Proxy] Response status: ${response.status}`);
+    
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[OneMap Proxy] Error response: ${text}`);
+      
+      // Return more detailed error
+      return res.status(response.status).json({
+        error: `OneMap API Error: ${response.status}`,
+        details: text
+      });
+    }
+
+    const data = await response.json();
+    console.log(`[OneMap Proxy] Results count: ${data.results?.length || 0}`);
+    
+    return res.status(200).json(data);
+    
+  } catch (error) {
+    console.error(`[OneMap Proxy] Caught error:`, error);
+    return res.status(500).json({ error: error.message });
+  }
+}
+</file>
+
+<file path="eslint.config.js">
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import tseslint from 'typescript-eslint'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+    },
+  },
+])
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="SingaTransit">
+    
+    <meta name="theme-color" content="#1a1a1a">
+
+    <title>SingaTransit</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "singatransit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "test": "vitest",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/leaflet": "^1.9.21",
+    "axios": "^1.13.2",
+    "leaflet": "^1.9.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-leaflet": "^5.0.0",
+    "vite-plugin-pwa": "^1.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^24.10.9",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "jsdom": "^27.4.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.18"
+  }
+}
+</file>
+
+<file path="scripts/temp_data_insert.py">
+import json
+
+try:
+    with open('./public/data/transit_graph.json', 'r') as f:
+        graph = json.load(f)
+        
+    print(f"Total Nodes: {len(graph)}")
+    
+    # Get first node
+    first_node = list(graph.keys())[0]
+    print(f"Sample Node ({first_node}):")
+    print(json.dumps(graph[first_node], indent=2))
+    
+    print("STATUS: GRAPH VALID")
+except Exception as e:
+    print(f"STATUS: FAILED - {e}")
+</file>
+
+<file path="src/App.css">
+:root {
+  --sidebar-width: 350px;
+  --primary-color: #2196F3;
+  --bg-dark: #1a1a1a;
+  --bg-darker: #111;
+  --border-color: #333;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-darker);
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Main Layout */
+.app-container {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+/* Sidebar (Desktop Default) */
+.sidebar {
+  width: var(--sidebar-width);
+  height: 100%;
+  background-color: var(--bg-dark);
+  color: white;
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  z-index: 2000;
+  box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+  transition: transform 0.3s ease;
+}
+
+.sidebar-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex-grow: 1;
+}
+
+.map-container {
+  flex-grow: 1;
+  position: relative;
+  z-index: 1;
+}
+
+/* Inputs */
+.input-group {
+  margin-bottom: 20px;
+  background-color: var(--border-color);
+  padding: 15px;
+  border-radius: 8px;
+}
+
+.dark-input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  background-color: #222;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 4px;
+  box-sizing: border-box; /* Fix padding causing overflow */
+}
+
+.action-btn {
+  width: 100%;
+  padding: 12px;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.action-btn:active {
+  opacity: 0.9;
+  transform: scale(0.98);
+}
+
+/* Route Selection Tabs */
+.route-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  background-color: #252525;
+  padding: 5px;
+  border-radius: 6px;
+}
+
+.route-tab {
+  flex: 1;
+  background: none;
+  border: 1px solid transparent;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  color: #888;
+  transition: all 0.2s ease;
+}
+
+.route-tab:hover {
+  background-color: #333;
+}
+
+.route-tab.active {
+  background-color: #333;
+  border-color: var(--primary-color);
+  color: white;
+}
+
+.route-tab-label {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+.route-tab-time {
+  font-size: 14px;
+}
+
+/* Favorites Section */
+.favorites-list {
+  margin-top: 20px;
+}
+
+.fav-item {
+  background-color: #252525;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-left: 3px solid transparent;
+}
+
+.fav-item:hover {
+  background-color: #333;
+  border-left: 3px solid var(--primary-color);
+}
+
+/* MOBILE RESPONSIVENESS */
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: 40vh; /* Takes bottom 40% of screen */
+    order: 2; /* Move to bottom */
+    border-right: none;
+    border-top: 1px solid var(--border-color);
+    position: absolute;
+    bottom: 0;
+  }
+
+  .map-container {
+    height: 60vh; /* Takes top 60% */
+    width: 100%;
+    order: 1;
+  }
+  
+  /* Make touch targets larger for mobile */
+  .action-btn {
+    padding: 15px; 
+    font-size: 16px;
+  }
+  
+  .dark-input {
+    padding: 12px;
+    font-size: 16px;
+  }
+}
+
+/* Route Options Bar */
+.route-options-bar {
+  margin-bottom: 15px;
+}
+
+.sort-section {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.sort-dropdown {
+  background-color: #222;
+  color: white;
+  border: 1px solid #444;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 14px;
+  flex-grow: 1;
+}
+
+/* Filter Chips */
+.mode-filter-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 5px;
+  /* Hide scrollbar but allow scroll */
+  scrollbar-width: none; 
+}
+
+.mode-filter-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  background-color: transparent;
+  border: 1px solid #555;
+  color: #aaa;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.chip.active {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+  color: white;
+  font-weight: 500;
+}
+
+.chip:hover {
+  border-color: #777;
+}
+
+.chip.active:hover {
+  border-color: var(--primary-color);
+  opacity: 0.9;
+}
+
+/* Accordion Styles */
+.accordion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.accordion-item {
+  background-color: #252525;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.accordion-item.active {
+  background-color: #2a2a2a;
+  border-color: var(--primary-color);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.accordion-header {
+  padding: 15px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accordion-header:hover {
+  background-color: #333;
+}
+
+.accordion-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.route-summary-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.mini-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: white;
+  background-color: #555;
+  font-weight: bold;
+}
+
+/* Smooth Accordion Transition Trick */
+.accordion-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease-out;
+}
+
+.accordion-body.open {
+  grid-template-rows: 1fr;
+}
+
+.accordion-content-wrapper {
+  overflow: hidden;
+}
+
+.accordion-inner-padding {
+  padding: 0 15px 15px 15px;
+  border-top: 1px solid #333;
+  margin-top: 5px;
+}
+
+/* --- ROUTE LIST & CARD STYLES --- */
+
+.route-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.route-card {
+  background-color: #252525;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.route-card:hover {
+  background-color: #2a2a2a;
+}
+
+.route-card.selected {
+  border-color: var(--primary-color);
+  background-color: #2c2c2c;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.route-card-header {
+  padding: 15px;
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.duration-info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.duration-mins {
+  font-size: 18px;
+  font-weight: bold;
+  color: white;
+}
+
+.arrival-time {
+  font-size: 14px;
+  color: #888;
+}
+
+.header-sub {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.mode-icons {
+  display: flex;
+  gap: 4px;
+}
+
+.mini-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: bold;
+  color: white;
+  background-color: #555;
+}
+
+.mini-badge.mode-bus { background-color: #2980b9; }
+.mini-badge.mode-mrt { background-color: #e74c3c; }
+.mini-badge.mode-lrt { background-color: #8e44ad; }
+
+/* Accordion Body */
+.route-card-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+  background-color: #222;
+}
+
+.route-card-body.open {
+  max-height: 500px; /* Arbitrary large height for animation */
+  overflow-y: auto;
+  border-top: 1px solid #333;
+}
+
+.body-content {
+  padding: 15px;
+}
+
+/* Leg Items */
+.leg-item {
+  padding-left: 12px;
+  margin-bottom: 15px;
+  border-left: 3px solid #555; /* Default fallback */
+  position: relative;
+}
+
+.leg-item:last-child {
+  margin-bottom: 0;
+}
+
+.leg-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.leg-service {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.leg-desc {
+  font-size: 13px;
+  color: #ddd;
+}
+
+.leg-sub {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.live-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: #7f8c8d;
+  color: white;
+}
+
+.live-badge.live { background-color: #27ae60; }
+.live-badge.sim { background-color: #d35400; }
+</file>
+
+<file path="src/App.tsx">
+import MapComponent from './components/MapComponent';
+import './App.css';
+
+function App() {
+  return (
+    <MapComponent />
+  );
+}
+
+export default App;
+</file>
+
+<file path="src/hooks/useLocalStorage.ts">
+import { useState } from 'react';
+
+export function useLocalStorage<T>(key: string, initialValue: T) {
+    // 1. Initialize state from local storage or default
+    const [storedValue, setStoredValue] = useState<T>(() => {
+        try {
+            const item = window.localStorage.getItem(key);
+            return item ? JSON.parse(item) : initialValue;
+        } catch (error) {
+            console.error(`Error reading localStorage key "${key}":`, error);
+            return initialValue;
+        }
+    });
+
+    // 2. Update local storage whenever state changes
+    const setValue = (value: T | ((val: T) => T)) => {
+        try {
+            // Allow value to be a function so we have same API as useState
+            const valueToStore = value instanceof Function ? value(storedValue) : value;
+            setStoredValue(valueToStore);
+            window.localStorage.setItem(key, JSON.stringify(valueToStore));
+        } catch (error) {
+            console.error(`Error setting localStorage key "${key}":`, error);
+        }
+    };
+
+    return [storedValue, setValue] as const;
+}
+</file>
+
+<file path="src/index.css">
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden; /* Prevent scrollbars */
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+}
+</file>
+
+<file path="src/main.tsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path="src/utils/MinHeap.ts">
+export interface HeapNode<T> {
+    element: T;
+    priority: number;
+}
+
+export class MinHeap<T> {
+    private heap: HeapNode<T>[];
+
+    constructor() {
+        this.heap = [];
+    }
+
+    get length(): number {
+        return this.heap.length;
+    }
+
+    public push(element: T, priority: number): void {
+        const node: HeapNode<T> = { element, priority };
+        this.heap.push(node);
+        this.bubbleUp(this.heap.length - 1);
+    }
+
+    public pop(): HeapNode<T> | undefined {
+        if (this.heap.length === 0) return undefined;
+        
+        const min = this.heap[0];
+        const last = this.heap.pop();
+        
+        if (this.heap.length > 0 && last) {
+            this.heap[0] = last;
+            this.bubbleDown(0);
+        }
+        
+        return min;
+    }
+
+    private bubbleUp(index: number): void {
+        while (index > 0) {
+            const parentIndex = Math.floor((index - 1) / 2);
+            if (this.heap[parentIndex].priority <= this.heap[index].priority) break;
+            
+            [this.heap[parentIndex], this.heap[index]] = [this.heap[index], this.heap[parentIndex]];
+            index = parentIndex;
+        }
+    }
+
+    private bubbleDown(index: number): void {
+        while (true) {
+            let leftChild = 2 * index + 1;
+            let rightChild = 2 * index + 2;
+            let smallest = index;
+
+            if (leftChild < this.heap.length && this.heap[leftChild].priority < this.heap[smallest].priority) {
+                smallest = leftChild;
+            }
+
+            if (rightChild < this.heap.length && this.heap[rightChild].priority < this.heap[smallest].priority) {
+                smallest = rightChild;
+            }
+
+            if (smallest === index) break;
+
+            [this.heap[index], this.heap[smallest]] = [this.heap[smallest], this.heap[index]];
+            index = smallest;
+        }
+    }
+}
+</file>
+
+<file path="tsconfig.app.json">
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "types": ["vite/client", "node", "vitest/globals", "@testing-library/jest-dom"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src"]
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+</file>
+
+<file path="tsconfig.node.json">
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["vite.config.ts"]
+}
+</file>
+
+<file path=".env.example">
+LTA_DATAMALL_API_KEY=
+ONEMAP_ACCESS_TOKEN=
+</file>
+
+<file path="README.md">
+# SingaTransit
+
+SingaTransit is a client-side public transport routing application for Singapore. It utilizes a custom implementation of Dijkstra's algorithm running in a Web Worker to calculate paths between bus stops. The application integrates real-time bus arrival data from the LTA DataMall API.
+
+## Features
+
+* **Graph-Based Routing:** Calculates shortest paths using a weighted graph of over 5,000 bus stops and services.
+* **Performance:** Routing calculations are offloaded to a Web Worker to ensure the main interface remains responsive (average calculation time: ~7ms).
+* **Real-Time Arrivals:** Fetches live bus timings from LTA DataMall V3.
+* **Simulation Fallback:** Automatically generates simulated data during off-peak hours (00:00 - 05:30) when real-time services are unavailable.
+* **Offline Capability:** configured as a Progressive Web App (PWA) to cache map assets and graph data.
+* **Personalization:** Users can save frequently used locations to local storage.
+* **Responsive Design:** Fully adaptive interface supporting desktop and mobile (bottom-sheet layout) views.
+
+## Architecture
+
+* **Frontend Framework:** React (TypeScript)
+* **Build Tool:** Vite
+* **Maps:** React Leaflet / OneMap (SLA)
+* **State Management:** React Hooks & LocalStorage
+* **Data Source:** LTA DataMall (Static datasets converted to JSON graph)
+
+## Installation and Setup
+
+### Prerequisites
+
+* Node.js (Version 18 or higher)
+* LTA DataMall API Key
+
+### Steps
+
+1.  Clone the repository:
+    ```bash
+    git clone [https://github.com/yourusername/singatransit.git](https://github.com/yourusername/singatransit.git)
+    cd singatransit
+    ```
+
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+
+3.  Configure Environment Variables:
+    Create a file named `.env` in the root directory and add your LTA API key:
+    ```
+    LTA_DATAMALL_API_KEY=your_api_key_here
+    ```
+
+4.  Run the development server:
+    ```bash
+    npm run dev
+    ```
+
+5.  Open your browser and navigate to `http://localhost:5173`.
+
+## Deployment
+
+### Vercel (Recommended)
+
+This project is configured for Vercel deployment using `vercel.json` rewrites to handle API proxying.
+
+1.  Push the code to a GitHub repository.
+2.  Import the repository into Vercel.
+3.  Add the `LTA_DATAMALL_API_KEY` in the Project Settings > Environment Variables.
+4.  Deploy.
+
+### Graph Data Maintenance
+
+The routing graph is generated from static LTA datasets. To update the graph:
+
+1.  Download the latest "Bus Stops", "Bus Services", and "Bus Routes" datasets from LTA DataMall.
+2.  Place the raw files in the `scripts/data` directory.
+3.  Run the builder script:
+    ```bash
+    python scripts/transit_graph_builder.py
+    ```
+4.  The script will output `transit_graph.json` and `stops_metadata.json` to the `public/data` directory.
+
+## License
+
+This project is open source. Data provided by Land Transport Authority (LTA) via DataMall. Maps provided by OneMap.
+</file>
+
+<file path=".gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Environment Variables
+.env
+</file>
+
+<file path="public/data/lrt_stations.json">
+[
+  {"code":"BP1","name":"Choa Chu Kang","lat":1.385362,"lng":103.744371,"line":"BPLRT"},
+  {"code":"BP2","name":"South View","lat":1.380298,"lng":103.745300,"line":"BPLRT"},
+  {"code":"BP3","name":"Keat Hong","lat":1.378536,"lng":103.749079,"line":"BPLRT"},
+  {"code":"BP4","name":"Teck Whye","lat":1.376686,"lng":103.753736,"line":"BPLRT"},
+  {"code":"BP5","name":"Phoenix","lat":1.378657,"lng":103.758039,"line":"BPLRT"},
+  {"code":"BP6","name":"Bukit Panjang","lat":1.378566,"lng":103.761613,"line":"BPLRT"},
+  {"code":"BP7","name":"Petir","lat":1.377751,"lng":103.766668,"line":"BPLRT"},
+  {"code":"BP8","name":"Pending","lat":1.376174,"lng":103.771260,"line":"BPLRT"},
+  {"code":"BP9","name":"Bangkit","lat":1.380018,"lng":103.772653,"line":"BPLRT"},
+  {"code":"BP10","name":"Fajar","lat":1.384351,"lng":103.771032,"line":"BPLRT"},
+  {"code":"BP11","name":"Segar","lat":1.387870,"lng":103.769578,"line":"BPLRT"},
+  {"code":"BP12","name":"Jelapang","lat":1.386766,"lng":103.764510,"line":"BPLRT"},
+  {"code":"BP13","name":"Senja","lat":1.382834,"lng":103.762283,"line":"BPLRT"},
+  
+  {"code":"STC","name":"Sengkang","lat":1.391641,"lng":103.895560,"line":"SKLRT"},
+  {"code":"SE1","name":"Compassvale","lat":1.394511,"lng":103.900448,"line":"SKLRT"},
+  {"code":"SE2","name":"Rumbia","lat":1.391583,"lng":103.906066,"line":"SKLRT"},
+  {"code":"SE3","name":"Bakau","lat":1.388094,"lng":103.905436,"line":"SKLRT"},
+  {"code":"SE4","name":"Kangkar","lat":1.383965,"lng":103.902240,"line":"SKLRT"},
+  {"code":"SE5","name":"Ranggung","lat":1.384234,"lng":103.897241,"line":"SKLRT"},
+  {"code":"SW1","name":"Cheng Lim","lat":1.396277,"lng":103.893796,"line":"SKLRT"},
+  {"code":"SW2","name":"Farmway","lat":1.399587,"lng":103.889311,"line":"SKLRT"},
+  {"code":"SW3","name":"Kupang","lat":1.398322,"lng":103.881267,"line":"SKLRT"},
+  {"code":"SW4","name":"Thanggam","lat":1.393847,"lng":103.880058,"line":"SKLRT"},
+  {"code":"SW5","name":"Fernvale","lat":1.392036,"lng":103.876353,"line":"SKLRT"},
+  {"code":"SW6","name":"Layar","lat":1.392066,"lng":103.880005,"line":"SKLRT"},
+  {"code":"SW7","name":"Tongkang","lat":1.389274,"lng":103.885970,"line":"SKLRT"},
+  {"code":"SW8","name":"Renjong","lat":1.386807,"lng":103.890602,"line":"SKLRT"},
+
+  {"code":"PTC","name":"Punggol","lat":1.405079,"lng":103.902342,"line":"PGLRT"},
+  {"code":"PE1","name":"Cove","lat":1.399283,"lng":103.905959,"line":"PGLRT"},
+  {"code":"PE2","name":"Meridian","lat":1.396913,"lng":103.908955,"line":"PGLRT"},
+  {"code":"PE3","name":"Coral Edge","lat":1.393909,"lng":103.912582,"line":"PGLRT"},
+  {"code":"PE4","name":"Riviera","lat":1.394546,"lng":103.916173,"line":"PGLRT"},
+  {"code":"PE5","name":"Kadaloor","lat":1.399622,"lng":103.916467,"line":"PGLRT"},
+  {"code":"PE6","name":"Oasis","lat":1.402287,"lng":103.912727,"line":"PGLRT"},
+  {"code":"PE7","name":"Damai","lat":1.405213,"lng":103.908611,"line":"PGLRT"},
+  {"code":"PW1","name":"Sam Kee","lat":1.409581,"lng":103.904832,"line":"PGLRT"},
+  {"code":"PW2","name":"Teck Lee","lat":1.412806,"lng":103.906563,"line":"PGLRT"},
+  {"code":"PW3","name":"Punggol Point","lat":1.416847,"lng":103.906660,"line":"PGLRT"},
+  {"code":"PW4","name":"Samudera","lat":1.415904,"lng":103.902175,"line":"PGLRT"},
+  {"code":"PW5","name":"Nibong","lat":1.411883,"lng":103.900276,"line":"PGLRT"},
+  {"code":"PW6","name":"Sumang","lat":1.408479,"lng":103.898600,"line":"PGLRT"},
+  {"code":"PW7","name":"Soo Teck","lat":1.405177,"lng":103.897215,"line":"PGLRT"}
+]
+</file>
+
+<file path="public/data/mrt_stations.json">
+[
+  {"code":"NS1","name":"Jurong East","lat":1.333207,"lng":103.742308,"line":"NSL"},
+  {"code":"NS2","name":"Bukit Batok","lat":1.349069,"lng":103.749596,"line":"NSL"},
+  {"code":"NS3","name":"Bukit Gombak","lat":1.359043,"lng":103.751863,"line":"NSL"},
+  {"code":"NS4","name":"Choa Chu Kang","lat":1.385417,"lng":103.744316,"line":"NSL"},
+  {"code":"NS5","name":"Yew Tee","lat":1.397383,"lng":103.747523,"line":"NSL"},
+  {"code":"NS7","name":"Kranji","lat":1.425178,"lng":103.762187,"line":"NSL"},
+  {"code":"NS8","name":"Marsiling","lat":1.432521,"lng":103.774074,"line":"NSL"},
+  {"code":"NS9","name":"Woodlands","lat":1.436819,"lng":103.786528,"line":"NSL"},
+  {"code":"NS10","name":"Admiralty","lat":1.440585,"lng":103.800998,"line":"NSL"},
+  {"code":"NS11","name":"Sembawang","lat":1.449051,"lng":103.820050,"line":"NSL"},
+  {"code":"NS12","name":"Canberra","lat":1.443076,"lng":103.829703,"line":"NSL"},
+  {"code":"NS13","name":"Yishun","lat":1.429443,"lng":103.835005,"line":"NSL"},
+  {"code":"NS14","name":"Khatib","lat":1.417383,"lng":103.832980,"line":"NSL"},
+  {"code":"NS15","name":"Yio Chu Kang","lat":1.381683,"lng":103.844991,"line":"NSL"},
+  {"code":"NS16","name":"Ang Mo Kio","lat":1.369933,"lng":103.849558,"line":"NSL"},
+  {"code":"NS17","name":"Bishan","lat":1.350839,"lng":103.848144,"line":"NSL"},
+  {"code":"NS18","name":"Braddell","lat":1.340469,"lng":103.846755,"line":"NSL"},
+  {"code":"NS19","name":"Toa Payoh","lat":1.332597,"lng":103.847577,"line":"NSL"},
+  {"code":"NS20","name":"Novena","lat":1.320441,"lng":103.843825,"line":"NSL"},
+  {"code":"NS21","name":"Newton","lat":1.312375,"lng":103.837984,"line":"NSL"},
+  {"code":"NS22","name":"Orchard","lat":1.302422,"lng":103.835312,"line":"NSL"},
+  {"code":"NS23","name":"Somerset","lat":1.300264,"lng":103.839086,"line":"NSL"},
+  {"code":"NS24","name":"Dhoby Ghaut","lat":1.298689,"lng":103.846172,"line":"NSL"},
+  {"code":"NS25","name":"City Hall","lat":1.292989,"lng":103.852543,"line":"NSL"},
+  {"code":"NS26","name":"Raffles Place","lat":1.283933,"lng":103.851463,"line":"NSL"},
+  {"code":"NS27","name":"Marina Bay","lat":1.276427,"lng":103.854592,"line":"NSL"},
+  {"code":"NS28","name":"Marina South Pier","lat":1.271027,"lng":103.862448,"line":"NSL"},
+  {"code":"EW1","name":"Pasir Ris","lat":1.373008,"lng":103.949265,"line":"EWL"},
+  {"code":"EW2","name":"Tampines","lat":1.353284,"lng":103.945229,"line":"EWL"},
+  {"code":"EW3","name":"Simei","lat":1.343197,"lng":103.953377,"line":"EWL"},
+  {"code":"EW4","name":"Tanah Merah","lat":1.327187,"lng":103.946349,"line":"EWL"},
+  {"code":"EW5","name":"Bedok","lat":1.324021,"lng":103.930036,"line":"EWL"},
+  {"code":"EW6","name":"Kembangan","lat":1.321038,"lng":103.912949,"line":"EWL"},
+  {"code":"EW7","name":"Eunos","lat":1.319779,"lng":103.903252,"line":"EWL"},
+  {"code":"EW8","name":"Paya Lebar","lat":1.318186,"lng":103.893063,"line":"EWL"},
+  {"code":"EW9","name":"Aljunied","lat":1.316433,"lng":103.882906,"line":"EWL"},
+  {"code":"EW10","name":"Kallang","lat":1.311489,"lng":103.871387,"line":"EWL"},
+  {"code":"EW11","name":"Lavender","lat":1.307370,"lng":103.862768,"line":"EWL"},
+  {"code":"EW12","name":"Bugis","lat":1.300191,"lng":103.856110,"line":"EWL"},
+  {"code":"EW13","name":"City Hall","lat":1.292989,"lng":103.852543,"line":"EWL"},
+  {"code":"EW14","name":"Raffles Place","lat":1.283933,"lng":103.851463,"line":"EWL"},
+  {"code":"EW15","name":"Tanjong Pagar","lat":1.276561,"lng":103.845863,"line":"EWL"},
+  {"code":"EW16","name":"Outram Park","lat":1.280225,"lng":103.839486,"line":"EWL"},
+  {"code":"EW17","name":"Tiong Bahru","lat":1.286103,"lng":103.827019,"line":"EWL"},
+  {"code":"EW18","name":"Redhill","lat":1.289635,"lng":103.816749,"line":"EWL"},
+  {"code":"EW19","name":"Queenstown","lat":1.294905,"lng":103.806037,"line":"EWL"},
+  {"code":"EW20","name":"Commonwealth","lat":1.302509,"lng":103.798312,"line":"EWL"},
+  {"code":"EW21","name":"Buona Vista","lat":1.307207,"lng":103.790555,"line":"EWL"},
+  {"code":"EW22","name":"Dover","lat":1.311305,"lng":103.778638,"line":"EWL"},
+  {"code":"EW23","name":"Clementi","lat":1.315135,"lng":103.765171,"line":"EWL"},
+  {"code":"EW24","name":"Jurong East","lat":1.333207,"lng":103.742308,"line":"EWL"},
+  {"code":"EW25","name":"Chinese Garden","lat":1.342353,"lng":103.732597,"line":"EWL"},
+  {"code":"EW26","name":"Lakeside","lat":1.344259,"lng":103.720749,"line":"EWL"},
+  {"code":"EW27","name":"Boon Lay","lat":1.338604,"lng":103.706065,"line":"EWL"},
+  {"code":"EW28","name":"Pioneer","lat":1.337587,"lng":103.697322,"line":"EWL"},
+  {"code":"EW29","name":"Joo Koon","lat":1.327717,"lng":103.678305,"line":"EWL"},
+  {"code":"EW30","name":"Gul Circle","lat":1.319471,"lng":103.660503,"line":"EWL"},
+  {"code":"EW31","name":"Tuas Crescent","lat":1.321027,"lng":103.649078,"line":"EWL"},
+  {"code":"EW32","name":"Tuas West Road","lat":1.330239,"lng":103.639614,"line":"EWL"},
+  {"code":"EW33","name":"Tuas Link","lat":1.340882,"lng":103.636991,"line":"EWL"},
+  {"code":"NE1","name":"HarbourFront","lat":1.265467,"lng":103.821446,"line":"NEL"},
+  {"code":"NE3","name":"Outram Park","lat":1.280225,"lng":103.839486,"line":"NEL"},
+  {"code":"NE4","name":"Chinatown","lat":1.284827,"lng":103.843577,"line":"NEL"},
+  {"code":"NE5","name":"Clarke Quay","lat":1.288280,"lng":103.846555,"line":"NEL"},
+  {"code":"NE6","name":"Dhoby Ghaut","lat":1.298689,"lng":103.846172,"line":"NEL"},
+  {"code":"NE7","name":"Little India","lat":1.306800,"lng":103.849000,"line":"NEL"},
+  {"code":"NE8","name":"Farrer Park","lat":1.312360,"lng":103.854210,"line":"NEL"},
+  {"code":"NE9","name":"Boon Keng","lat":1.319335,"lng":103.861569,"line":"NEL"},
+  {"code":"NE10","name":"Potong Pasir","lat":1.331303,"lng":103.869059,"line":"NEL"},
+  {"code":"NE11","name":"Woodleigh","lat":1.339190,"lng":103.870818,"line":"NEL"},
+  {"code":"NE12","name":"Serangoon","lat":1.349706,"lng":103.873574,"line":"NEL"},
+  {"code":"NE13","name":"Kovan","lat":1.360180,"lng":103.885000,"line":"NEL"},
+  {"code":"NE14","name":"Hougang","lat":1.371292,"lng":103.892380,"line":"NEL"},
+  {"code":"NE15","name":"Buangkok","lat":1.382878,"lng":103.893122,"line":"NEL"},
+  {"code":"NE16","name":"Sengkang","lat":1.391641,"lng":103.895560,"line":"NEL"},
+  {"code":"NE17","name":"Punggol","lat":1.405079,"lng":103.902342,"line":"NEL"},
+  {"code":"CC1","name":"Dhoby Ghaut","lat":1.298689,"lng":103.846172,"line":"CCL"},
+  {"code":"CC2","name":"Bras Basah","lat":1.296862,"lng":103.850667,"line":"CCL"},
+  {"code":"CC3","name":"Esplanade","lat":1.293489,"lng":103.855362,"line":"CCL"},
+  {"code":"CC4","name":"Promenade","lat":1.292334,"lng":103.860662,"line":"CCL"},
+  {"code":"CC5","name":"Nicoll Highway","lat":1.299711,"lng":103.863648,"line":"CCL"},
+  {"code":"CC6","name":"Stadium","lat":1.302826,"lng":103.875317,"line":"CCL"},
+  {"code":"CC7","name":"Mountbatten","lat":1.306202,"lng":103.882531,"line":"CCL"},
+  {"code":"CC8","name":"Dakota","lat":1.308292,"lng":103.888307,"line":"CCL"},
+  {"code":"CC9","name":"Paya Lebar","lat":1.318186,"lng":103.893063,"line":"CCL"},
+  {"code":"CC10","name":"MacPherson","lat":1.326840,"lng":103.889989,"line":"CCL"},
+  {"code":"CC11","name":"Tai Seng","lat":1.335383,"lng":103.887965,"line":"CCL"},
+  {"code":"CC12","name":"Bartley","lat":1.342501,"lng":103.880178,"line":"CCL"},
+  {"code":"CC13","name":"Serangoon","lat":1.349706,"lng":103.873574,"line":"CCL"},
+  {"code":"CC14","name":"Lorong Chuan","lat":1.351531,"lng":103.864132,"line":"CCL"},
+  {"code":"CC15","name":"Bishan","lat":1.350839,"lng":103.848144,"line":"CCL"},
+  {"code":"CC16","name":"Marymount","lat":1.348707,"lng":103.839423,"line":"CCL"},
+  {"code":"CC17","name":"Caldecott","lat":1.337246,"lng":103.839505,"line":"CCL"},
+  {"code":"CC19","name":"Botanic Gardens","lat":1.322387,"lng":103.815385,"line":"CCL"},
+  {"code":"CC20","name":"Farrer Road","lat":1.317511,"lng":103.807573,"line":"CCL"},
+  {"code":"CC21","name":"Holland Village","lat":1.311352,"lng":103.796073,"line":"CCL"},
+  {"code":"CC22","name":"Buona Vista","lat":1.307207,"lng":103.790555,"line":"CCL"},
+  {"code":"CC23","name":"one-north","lat":1.299474,"lng":103.787177,"line":"CCL"},
+  {"code":"CC24","name":"Kent Ridge","lat":1.293370,"lng":103.784400,"line":"CCL"},
+  {"code":"CC25","name":"Haw Par Villa","lat":1.282571,"lng":103.781737,"line":"CCL"},
+  {"code":"CC26","name":"Pasir Panjang","lat":1.276214,"lng":103.791359,"line":"CCL"},
+  {"code":"CC27","name":"Labrador Park","lat":1.272190,"lng":103.802654,"line":"CCL"},
+  {"code":"CC28","name":"Telok Blangah","lat":1.270706,"lng":103.809772,"line":"CCL"},
+  {"code":"CC29","name":"HarbourFront","lat":1.265467,"lng":103.821446,"line":"CCL"},
+  {"code":"DT1","name":"Bukit Panjang","lat":1.378566,"lng":103.761613,"line":"DTL"},
+  {"code":"DT2","name":"Cashew","lat":1.369811,"lng":103.764566,"line":"DTL"},
+  {"code":"DT3","name":"Hillview","lat":1.362345,"lng":103.767418,"line":"DTL"},
+  {"code":"DT5","name":"Beauty World","lat":1.341223,"lng":103.775794,"line":"DTL"},
+  {"code":"DT6","name":"King Albert Park","lat":1.335893,"lng":103.783236,"line":"DTL"},
+  {"code":"DT7","name":"Sixth Avenue","lat":1.330858,"lng":103.796907,"line":"DTL"},
+  {"code":"DT8","name":"Tan Kah Kee","lat":1.325701,"lng":103.807755,"line":"DTL"},
+  {"code":"DT9","name":"Botanic Gardens","lat":1.322387,"lng":103.815385,"line":"DTL"},
+  {"code":"DT10","name":"Stevens","lat":1.320066,"lng":103.826026,"line":"DTL"},
+  {"code":"DT11","name":"Newton","lat":1.312375,"lng":103.837984,"line":"DTL"},
+  {"code":"DT12","name":"Little India","lat":1.306800,"lng":103.849000,"line":"DTL"},
+  {"code":"DT13","name":"Rochor","lat":1.303661,"lng":103.852598,"line":"DTL"},
+  {"code":"DT14","name":"Bugis","lat":1.300191,"lng":103.856110,"line":"DTL"},
+  {"code":"DT15","name":"Promenade","lat":1.292334,"lng":103.860662,"line":"DTL"},
+  {"code":"DT16","name":"Bayfront","lat":1.281874,"lng":103.859080,"line":"DTL"},
+  {"code":"DT17","name":"Downtown","lat":1.279446,"lng":103.852940,"line":"DTL"},
+  {"code":"DT18","name":"Telok Ayer","lat":1.282055,"lng":103.848606,"line":"DTL"},
+  {"code":"DT19","name":"Chinatown","lat":1.284827,"lng":103.843577,"line":"DTL"},
+  {"code":"DT20","name":"Fort Canning","lat":1.292473,"lng":103.844318,"line":"DTL"},
+  {"code":"DT21","name":"Bencoolen","lat":1.298918,"lng":103.850354,"line":"DTL"},
+  {"code":"DT22","name":"Jalan Besar","lat":1.305171,"lng":103.855296,"line":"DTL"},
+  {"code":"DT23","name":"Bendemeer","lat":1.313672,"lng":103.862978,"line":"DTL"},
+  {"code":"DT24","name":"Geylang Bahru","lat":1.321301,"lng":103.871801,"line":"DTL"},
+  {"code":"DT25","name":"Mattar","lat":1.326877,"lng":103.883248,"line":"DTL"},
+  {"code":"DT26","name":"MacPherson","lat":1.326840,"lng":103.889989,"line":"DTL"},
+  {"code":"DT27","name":"Ubi","lat":1.329977,"lng":103.899211,"line":"DTL"},
+  {"code":"DT28","name":"Kaki Bukit","lat":1.334967,"lng":103.908459,"line":"DTL"},
+  {"code":"DT29","name":"Bedok North","lat":1.334742,"lng":103.917978,"line":"DTL"},
+  {"code":"DT30","name":"Bedok Reservoir","lat":1.336608,"lng":103.932235,"line":"DTL"},
+  {"code":"DT31","name":"Tampines West","lat":1.345515,"lng":103.938437,"line":"DTL"},
+  {"code":"DT32","name":"Tampines","lat":1.353284,"lng":103.945229,"line":"DTL"},
+  {"code":"DT33","name":"Tampines East","lat":1.356191,"lng":103.954634,"line":"DTL"},
+  {"code":"DT34","name":"Upper Changi","lat":1.341739,"lng":103.961473,"line":"DTL"},
+  {"code":"DT35","name":"Expo","lat":1.335469,"lng":103.962329,"line":"DTL"},
+  {"code":"TE1","name":"Woodlands North","lat":1.447782,"lng":103.785136,"line":"TEL"},
+  {"code":"TE2","name":"Woodlands","lat":1.436819,"lng":103.786528,"line":"TEL"},
+  {"code":"TE3","name":"Woodlands South","lat":1.427318,"lng":103.793264,"line":"TEL"},
+  {"code":"TE4","name":"Springleaf","lat":1.397581,"lng":103.817857,"line":"TEL"},
+  {"code":"TE5","name":"Lentor","lat":1.385506,"lng":103.835744,"line":"TEL"},
+  {"code":"TE6","name":"Mayflower","lat":1.371463,"lng":103.836568,"line":"TEL"},
+  {"code":"TE7","name":"Bright Hill","lat":1.363290,"lng":103.832962,"line":"TEL"},
+  {"code":"TE8","name":"Upper Thomson","lat":1.354416,"lng":103.832898,"line":"TEL"},
+  {"code":"TE9","name":"Caldecott","lat":1.337246,"lng":103.839505,"line":"TEL"},
+  {"code":"TE11","name":"Stevens","lat":1.320066,"lng":103.826026,"line":"TEL"},
+  {"code":"TE12","name":"Napier","lat":1.306782,"lng":103.817682,"line":"TEL"},
+  {"code":"TE13","name":"Orchard Boulevard","lat":1.302196,"lng":103.824244,"line":"TEL"},
+  {"code":"TE14","name":"Orchard","lat":1.302422,"lng":103.835312,"line":"TEL"},
+  {"code":"TE15","name":"Great World","lat":1.293309,"lng":103.831828,"line":"TEL"},
+  {"code":"TE16","name":"Havelock","lat":1.288599,"lng":103.833596,"line":"TEL"},
+  {"code":"TE17","name":"Outram Park","lat":1.280225,"lng":103.839486,"line":"TEL"},
+  {"code":"TE18","name":"Maxwell","lat":1.280535,"lng":103.843872,"line":"TEL"},
+  {"code":"TE19","name":"Shenton Way","lat":1.277717,"lng":103.850462,"line":"TEL"},
+  {"code":"TE20","name":"Marina Bay","lat":1.276427,"lng":103.854592,"line":"TEL"},
+  {"code":"TE22","name":"Gardens by the Bay","lat":1.278915,"lng":103.867295,"line":"TEL"}
+]
+</file>
+
+<file path="src/components/LocationSearch.tsx">
+import React, { useState, useEffect, useRef } from 'react';
+import { searchOneMap } from '../services/ltaService';
+
+interface Station {
+    id: string;
+    name: string;
+    road: string;
+    type: 'BUS' | 'MRT' | 'LRT' | 'PLACE';
+    lat?: number;
+    lng?: number;
+}
+
+interface Metadata {
+    [key: string]: {
+        name: string;
+        road: string;
+        type?: 'BUS' | 'MRT' | 'LRT';
+    };
+}
+
+interface LocationSearchProps {
+    label: string;
+    initialValue?: string;
+    onSelect: (id: string) => void;
+    onSave?: () => void; // Optional "Save" button handler
+}
+
+export const LocationSearch: React.FC<LocationSearchProps> = ({ label, initialValue, onSelect, onSave }) => {
+    const [query, setQuery] = useState('');
+    const [stations, setStations] = useState<Station[]>([]);
+    const [suggestions, setSuggestions] = useState<Station[]>([]);
+    const [showDropdown, setShowDropdown] = useState(false);
+    const wrapperRef = useRef<HTMLDivElement>(null);
+
+    // Load Data Once
+    useEffect(() => {
+        fetch('/data/stops_metadata.json')
+            .then(res => res.json())
+            .then((data: Metadata) => {
+                const list = Object.entries(data).map(([id, info]) => ({
+                    id,
+                    name: info.name,
+                    road: info.road,
+                    type: info.type || 'BUS'
+                }));
+                setStations(list);
+                
+                // Set initial text if ID is provided
+                if (initialValue && data[initialValue]) {
+                    setQuery(data[initialValue].name);
+                }
+            })
+            .catch(err => console.error("Failed to load metadata", err));
+    }, []);
+
+    // Update query if initialValue changes externally (e.g. loading a favorite)
+    useEffect(() => {
+        if (initialValue && stations.length > 0) {
+            const match = stations.find(s => s.id === initialValue);
+            if (match) setQuery(match.name);
+        }
+    }, [initialValue, stations]);
+
+    // Handle Outside Click
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+                setShowDropdown(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    // Filter Logic + OneMap Search
+    useEffect(() => {
+        const fetchSuggestions = async () => {
+            if (query.length < 2) {
+                setSuggestions([]);
+                return;
+            }
+
+            const lowerQuery = query.toLowerCase();
+            
+            // 1. Filter local stations
+            const localMatches = stations
+                .filter(s =>
+                    s.name.toLowerCase().includes(lowerQuery) ||
+                    s.id.toLowerCase().includes(lowerQuery) ||
+                    s.road.toLowerCase().includes(lowerQuery)
+                );
+
+            // 2. Fetch from OneMap if query looks like a place/postal code
+            // (Only if we don't have too many local matches, or always?)
+            let placeMatches: Station[] = [];
+            try {
+                const oneMapResults = await searchOneMap(query);
+                placeMatches = oneMapResults.map(res => ({
+                    id: `place:${res.LATITUDE},${res.LONGITUDE}:${res.SEARCHVAL}`,
+                    name: res.SEARCHVAL,
+                    road: res.ADDRESS,
+                    type: 'PLACE',
+                    lat: parseFloat(res.LATITUDE),
+                    lng: parseFloat(res.LONGITUDE)
+                }));
+            } catch (err) {
+                console.error("OneMap search failed", err);
+            }
+
+            const combined = [...localMatches, ...placeMatches].slice(0, 50);
+            setSuggestions(combined);
+        };
+
+        const timer = setTimeout(fetchSuggestions, 300); // Debounce
+        return () => clearTimeout(timer);
+    }, [query, stations]);
+
+    const handleSelect = (station: Station) => {
+        setQuery(station.name);
+        onSelect(station.id);
+        setShowDropdown(false);
+    };
+
+    const getBadgeColor = (type: string) => {
+        switch(type) {
+            case 'MRT': return '#e74c3c'; // Red
+            case 'LRT': return '#8e44ad'; // Purple
+            case 'PLACE': return '#27ae60'; // Green
+            default: return '#3498db';    // Blue
+        }
+    };
+
+    return (
+        <div ref={wrapperRef} style={{ marginBottom: '10px', position: 'relative', width: '100%' }}>
+            <label style={{ fontSize: '10px', color: '#aaa', display: 'block', marginBottom: '4px' }}>
+                {label}
+            </label>
+            <div style={{ display: 'flex' }}>
+                <input
+                    className="dark-input"
+                    value={query}
+                    onChange={(e) => {
+                        setQuery(e.target.value);
+                        setShowDropdown(true);
+                    }}
+                    onFocus={() => setShowDropdown(true)}
+                    placeholder="Search places, postal codes, stops..."
+                    style={{ flex: 1 }}
+                />
+                {onSave && (
+                    <button 
+                        onClick={onSave} 
+                        style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', padding: '0 8px' }}
+                        title="Save to Favorites"
+                    >
+                        ★
+                    </button>
+                )}
+            </div>
+
+            {showDropdown && suggestions.length > 0 && (
+                <ul className="suggestions-list">
+                    {suggestions.map(s => (
+                        <li key={s.id} onClick={() => handleSelect(s)}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>{s.name}</span>
+                                <span style={{ 
+                                    fontSize: '9px', 
+                                    background: getBadgeColor(s.type), 
+                                    padding: '2px 4px', 
+                                    borderRadius: '3px', 
+                                    color: 'white' 
+                                }}>
+                                    {s.type}
+                                </span>
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#888' }}>{s.road}</div>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+};
+</file>
+
+<file path="src/components/MapComponent.tsx">
+import React, { useEffect, useState, useRef } from 'react';
+import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+import PathfinderWorker from '../workers/pathfinder.worker?worker';
+import { fetchArrivals, type ServiceArrival } from '../services/ltaService';
+import { LocationSearch } from './LocationSearch';
+import { RouteOptionsBar } from './RouteOptions/RouteOptionsBar';
+import { RouteList } from './RouteList/RouteList';
+import { processRoutes } from '../utils/routeProcessor';
+import type { 
+    SortOption, 
+    TransportMode, 
+    Metadata, 
+    RouteOption, 
+    ProcessedRoute,
+    RouteSegment
+} from '../types/transport';
+
+// Icons setup
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+
+let DefaultIcon = L.icon({
+    iconUrl: icon,
+    shadowUrl: iconShadow,
+    iconSize: [25, 41],
+    iconAnchor: [12, 41]
+});
+L.Marker.prototype.options.icon = DefaultIcon;
+
+const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198];
+
+const MapComponent: React.FC = () => {
+    // 1. Core State
+    const [metadata, setMetadata] = useState<Metadata | null>(null);
+    const [stats, setStats] = useState<string>("Initializing...");
+
+    // 2. Route State
+    const [processedRoutes, setProcessedRoutes] = useState<ProcessedRoute[]>([]);
+    const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+
+    // 3. Filters & Inputs
+    const [excludedModes, setExcludedModes] = useState<Set<TransportMode>>(new Set());
+    const [activeSort, setActiveSort] = useState<SortOption>('FASTEST');
+    const [startId, setStartId] = useState('84009'); // Bedok
+    const [endId, setEndId] = useState('01012'); // Hotel Grand Pacific
+    
+    // 4. Real-Time Data
+    const [arrivalData, setArrivalData] = useState<ServiceArrival[]>([]);
+    const [isSimulated, setIsSimulated] = useState(false);
+    
+    const workerRef = useRef<Worker | null>(null);
+
+    // --- EFFECT: Load Static Data ---
+    useEffect(() => {
+        fetch('/data/stops_metadata.json')
+            .then(res => res.json())
+            .then((data: Metadata) => {
+                setMetadata(data);
+                setStats(`Ready. Loaded ${Object.keys(data).length} nodes.`);
+            })
+            .catch(() => setStats("Failed to load metadata."));
+    }, []);
+
+    // --- EFFECT: Worker Setup ---
+    useEffect(() => {
+        const worker = new PathfinderWorker();
+        workerRef.current = worker;
+
+        worker.onmessage = (e) => {
+            const { type, result } = e.data;
+            if (type === 'RESULT') {
+                if (result.error) {
+                    setStats(`Error: ${result.error}`);
+                    setProcessedRoutes([]);
+                } else {
+                    // result is Raw RouteOption[]
+                    if (metadata) {
+                        const processed = processRoutes(result as RouteOption[], metadata);
+                        setProcessedRoutes(processed);
+                        
+                        // Select the first route by default if none selected or previous selection invalid
+                        if (processed.length > 0) {
+                            setSelectedRouteId(prev => {
+                                const exists = processed.find(r => r.id === prev);
+                                return exists ? prev : processed[0].id;
+                            });
+                        }
+                        
+                        setStats(`Found ${processed.length} routes.`);
+                    }
+                }
+            } else if (type === 'LOG') {
+                console.log("[Worker]", result);
+            }
+        };
+
+        return () => worker.terminate();
+    }, [metadata]); // Re-create worker listener if metadata changes
+
+    // --- EFFECT: Trigger Pathfinding ---
+    useEffect(() => {
+        if (!workerRef.current || !metadata || !startId || !endId) return;
+
+        setStats("Calculating...");
+        
+        workerRef.current.postMessage({
+            type: 'FIND_PATH',
+            payload: {
+                start: startId,
+                end: endId,
+                excludedModes: Array.from(excludedModes)
+            }
+        });
+
+    }, [startId, endId, excludedModes, metadata]);
+
+    // --- EFFECT: Fetch Real-Time Data ---
+    useEffect(() => {
+        if (!selectedRouteId || processedRoutes.length === 0) return;
+
+        const selectedRoute = processedRoutes.find(r => r.id === selectedRouteId);
+        if (!selectedRoute) return;
+
+        const firstLeg = selectedRoute.legs[0];
+
+        if (firstLeg && firstLeg.type === 'BUS') {
+            fetchArrivals(firstLeg.startStopId)
+                .then(data => {
+                    const safeData = data || [];
+                    const hasTargetBus = safeData.some(s => s.ServiceNo === firstLeg.service);
+                    setArrivalData(safeData);
+                    setIsSimulated(!hasTargetBus); 
+                })
+                .catch(() => {
+                    setArrivalData([]);
+                    setIsSimulated(true);
+                });
+        }
+    }, [selectedRouteId, processedRoutes]);
+
+    // --- HANDLERS ---
+    const handleRouteSelect = (id: string) => {
+        setSelectedRouteId(id);
+    };
+
+    // --- RENDER HELPERS ---
+    const getSegmentStyle = (segment: RouteSegment, isSelected: boolean) => {
+        const baseOpacity = isSelected ? 1 : 0.3;
+        const weight = isSelected ? 5 : 3;
+        const zIndex = isSelected ? 100 : 1;
+
+        let color = '#7f8c8d'; // Walk
+        if (segment.type === 'MRT') color = '#e74c3c';
+        if (segment.type === 'LRT') color = '#8e44ad';
+        if (segment.type === 'BUS') color = '#2980b9';
+
+        return { color, weight, opacity: baseOpacity, zIndex };
+    };
+
+    return (
+        <div className="app-container">
+            {/* SIDEBAR */}
+            <div className="sidebar">
+                <div className="sidebar-content">
+                    <h2 style={{ marginTop: 0 }}>SingaTransit</h2>
+                    
+                    <div className="input-group">
+                        <LocationSearch 
+                            label="FROM" 
+                            initialValue={startId} 
+                            onSelect={setStartId} 
+                        />
+                        <LocationSearch 
+                            label="TO" 
+                            initialValue={endId} 
+                            onSelect={setEndId} 
+                        />
+                    </div>
+
+                    <RouteOptionsBar 
+                        activeSort={activeSort}
+                        excludedModes={excludedModes}
+                        onSortChange={setActiveSort}
+                        onModeToggle={(mode) => {
+                            const next = new Set(excludedModes);
+                            if (next.has(mode)) next.delete(mode);
+                            else next.add(mode);
+                            setExcludedModes(next);
+                        }}
+                    />
+
+                    <div className="status-bar" style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
+                        {stats}
+                    </div>
+
+                    <RouteList 
+                        routes={processedRoutes}
+                        selectedId={selectedRouteId}
+                        onSelect={handleRouteSelect}
+                        arrivalData={arrivalData}
+                        isSimulated={isSimulated}
+                    />
+                </div>
+            </div>
+
+            {/* MAP */}
+            <div className="map-container">
+                <MapContainer center={SINGAPORE_CENTER} zoom={12} style={{ height: '100%', width: '100%' }}>
+                    <TileLayer
+                        url="https://www.onemap.gov.sg/maps/json/raster/default/256/{z}/{x}/{y}.png"
+                        attribution='Map data © contributors, <a href="https://www.sla.gov.sg/">Singapore Land Authority</a>'
+                    />
+
+                    {/* Render ALL routes, but dim unselected ones */}
+                    {processedRoutes.map(route => {
+                        const isSelected = route.id === selectedRouteId;
+                        return route.segments.map((seg, idx) => (
+                            <Polyline
+                                key={`${route.id}-${idx}`}
+                                positions={seg.positions}
+                                pathOptions={getSegmentStyle(seg, isSelected)}
+                                eventHandlers={{
+                                    click: () => handleRouteSelect(route.id)
+                                }}
+                            />
+                        ));
+                    })}
+
+                    {/* Start/End Markers */}
+                    {metadata && metadata[startId] && (
+                        <Marker position={[metadata[startId].lat, metadata[startId].lng]}>
+                            <Popup>Start: {metadata[startId].name}</Popup>
+                        </Marker>
+                    )}
+                    {metadata && metadata[endId] && (
+                        <Marker position={[metadata[endId].lat, metadata[endId].lng]}>
+                            <Popup>End: {metadata[endId].name}</Popup>
+                        </Marker>
+                    )}
+                </MapContainer>
+            </div>
+        </div>
+    );
+};
+
+export default MapComponent;
+</file>
+
+<file path="src/services/ltaService.ts">
+import axios from 'axios';
+
+export interface NextBus {
+    OriginCode: string;
+    DestinationCode: string;
+    EstimatedArrival: string; // ISO String (e.g., "2023-10-25T14:00:00+08:00")
+    Latitude: string;
+    Longitude: string;
+    VisitNumber: string;
+    Load: string; // "SEA" (Seats Available), "SDA" (Standing), "LSD" (Limited)
+    Feature: string; // "WAB" (Wheelchair)
+    Type: string; // "SD" (Single Deck), "DD" (Double)
+}
+
+export interface ServiceArrival {
+    ServiceNo: string;
+    Operator: string;
+    NextBus: NextBus;
+    NextBus2: NextBus;
+    NextBus3: NextBus;
+}
+
+export const fetchArrivals = async (busStopCode: string): Promise<ServiceArrival[]> => {
+    try {
+        const response = await axios.get(`/api/lta-proxy`, {
+            params: { BusStopCode: busStopCode }
+        });
+        
+        return response.data.Services || [];
+    } catch (error) {
+        console.error("Failed to fetch arrivals:", error);
+        return [];
+    }
+};
+
+// Utility to calculate minutes until arrival
+export const getMinutesToArrival = (isoString: string): number => {
+    if (!isoString) return -1;
+    const arrival = new Date(isoString);
+    const now = new Date();
+    const diffMs = arrival.getTime() - now.getTime();
+    const minutes = Math.floor(diffMs / 60000);
+    return minutes < 0 ? 0 : minutes;
+};
+
+export interface OneMapResult {
+    SEARCHVAL: string;
+    ADDRESS: string;
+    LATITUDE: string;
+    LONGITUDE: string;
+}
+
+export const searchOneMap = async (query: string): Promise<OneMapResult[]> => {
+  if (!query || query.length < 2) return [];
+  try {
+    const response = await axios.get('/api/onemap-proxy', {
+      params: {
+        searchVal: query,
+        returnGeom: 'Y',
+        getAddrDetails: 'Y',
+        pageNum: 1
+      }
+    });
+    console.log(`[OneMap Search] Query: "${query}", Results: ${response.data.results?.length || 0}`);
+    return response.data.results || [];
+  } catch (error) {
+    console.error("Failed to search OneMap:", error);
+    return [];
+  }
+};
+</file>
+
+<file path="vite.config.ts">
+import { defineConfig, loadEnv } from 'vite'
+import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+
+  if (!env.LTA_DATAMALL_API_KEY) {
+      console.warn("⚠️  WARNING: LTA_DATAMALL_API_KEY is missing!");
+  } else {
+      console.log("✅  SUCCESS: LTA API Key detected.");
+  }
+
+  return {
+    plugins: [
+      react(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+        manifest: {
+          name: 'SingaTransit',
+          short_name: 'SingaTransit',
+          description: 'Singapore Transit Routing & Arrival',
+          theme_color: '#1a1a1a',
+          background_color: '#1a1a1a',
+          display: 'standalone',
+          orientation: 'portrait',
+          icons: [
+            {
+              src: 'pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png'
+            },
+            {
+              src: 'pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png'
+            }
+          ]
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+        }
+      })
+    ],
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.ts',
+    },
+    server: {
+      proxy: {
+        '/lta-api': {
+          target: 'https://datamall2.mytransport.sg',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/lta-api/, '/ltaodataservice'),
+          headers: {
+            'AccountKey': env.LTA_DATAMALL_API_KEY || '',
+            'accept': 'application/json'
+          },
+          configure: (proxy, _options) => {
+            proxy.on('error', (err, _req, _res) => {
+              console.log('❌ Proxy Error:', err);
+            });
+            // Removed unused 'proxyRes' listener to fix build error
+          }
+        },
+        '/api/onemap-proxy': {
+          target: 'https://www.onemap.gov.sg',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/api\/onemap-proxy/, '/api/common/elastic/search'),
+          headers: {
+            'accept': 'application/json',
+            ...(env.ONEMAP_ACCESS_TOKEN && { 'Authorization': `Bearer ${env.ONEMAP_ACCESS_TOKEN}` })
+          },
+          configure: (proxy, _options) => {
+            proxy.on('error', (err, _req, _res) => {
+              console.log('❌ OneMap Proxy Error:', err);
+            });
+          }
+        }
+      }
+    }
+  }
+})
+</file>
+
+<file path="scripts/transit_graph_builder.py">
+import requests
+import json
+import os
+import math
+import re
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Configuration
+API_KEY = os.getenv('LTA_DATAMALL_API_KEY')
+BASE_URL = 'https://datamall2.mytransport.sg/ltaodataservice'
+OUTPUT_DIR = './public/data'
+
+# --- PHYSICS CONSTANTS ---
+AVG_BUS_SPEED_KMH = 25
+MRT_SPEED_KMH = 60
+LRT_SPEED_KMH = 40
+WALK_SPEED_KMH = 5
+SECONDS_PER_HOUR = 3600
+MAX_WALK_RADIUS_KM = 0.4 # Max transfer distance (400m)
+
+headers = {
+    'AccountKey': API_KEY,
+    'accept': 'application/json'
+}
+
+def fetch_lta_data(endpoint):
+    """Fetches data from LTA API with pagination."""
+    data_buffer = []
+    skip = 0
+    print(f"Fetching {endpoint}...")
+    while True:
+        url = f"{BASE_URL}/{endpoint}?$skip={skip}"
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code != 200:
+                print(f"Error {response.status_code}: {response.text}")
+                break
+            
+            results = response.json().get('value', [])
+            if not results: break
+            
+            data_buffer.extend(results)
+            skip += 500
+        except Exception as e:
+            print(f"Request failed: {e}")
+            break
+            
+    print(f"Fetched {len(data_buffer)} records for {endpoint}")
+    return data_buffer
+
+def load_local_json(filename):
+    """Loads local JSON files (MRT/LRT data)."""
+    path = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.exists(path):
+        print(f"Warning: {path} not found. Skipping.")
+        return []
+    with open(path, 'r') as f:
+        return json.load(f)
+
+# --- GEOSPATIAL HELPERS ---
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) * math.sin(dlat / 2) + \
+        math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+        math.sin(dlon / 2) * math.sin(dlon / 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def calculate_time_weight(distance_km, speed_kmh):
+    if distance_km <= 0: return 15
+    return (distance_km / speed_kmh) * SECONDS_PER_HOUR
+
+def get_grid_key(lat, lng, grid_size=0.005):
+    return (math.floor(lat / grid_size), math.floor(lng / grid_size))
+
+# --- GRAPH BUILDERS ---
+
+def add_edge(graph, u, v, service, direction, dist, weight):
+    if u not in graph: graph[u] = {}
+    if v not in graph[u]: graph[u][v] = []
+    
+    graph[u][v].append({
+        'service': service,
+        'direction': direction,
+        'distance': dist,
+        'weight': int(weight)
+    })
+
+def build_bus_graph(routes_data, graph):
+    print("Building Bus Layer...")
+    sorted_routes = sorted(routes_data, key=lambda x: (x['ServiceNo'], x['Direction'], x['StopSequence']))
+
+    for i in range(len(sorted_routes) - 1):
+        curr = sorted_routes[i]
+        nxt = sorted_routes[i+1]
+
+        if (curr['ServiceNo'] == nxt['ServiceNo'] and 
+            curr['Direction'] == nxt['Direction'] and
+            nxt['StopSequence'] == curr['StopSequence'] + 1):
+
+            dist = max(0, float(nxt.get('Distance') or 0) - float(curr.get('Distance') or 0))
+            weight = calculate_time_weight(dist, AVG_BUS_SPEED_KMH)
+            
+            add_edge(graph, curr['BusStopCode'], nxt['BusStopCode'], 
+                     curr['ServiceNo'], curr['Direction'], dist, weight)
+
+def build_rail_graph(stations_data, graph, metadata, speed_kmh, mode_type):
+    print(f"Building {mode_type} Layer...")
+    
+    lines = {}
+    for stn in stations_data:
+        line = stn.get('line', 'UNKNOWN')
+        if line not in lines: lines[line] = []
+        lines[line].append(stn)
+        
+        # Add to metadata with TYPE
+        metadata[stn['code']] = {
+            'lat': float(stn['lat']),
+            'lng': float(stn['lng']),
+            'name': stn['name'] + f" {mode_type}", # Append type for clarity in search
+            'road': f"{line} Line",
+            'type': mode_type # Tag for UI icons
+        }
+
+    for line_name, stations in lines.items():
+        def get_sort_key(s):
+            match = re.search(r'\d+', s['code'])
+            return int(match.group()) if match else 0
+            
+        stations.sort(key=get_sort_key)
+        
+        for i in range(len(stations) - 1):
+            u, v = stations[i], stations[i+1]
+            dist = haversine_distance(u['lat'], u['lng'], v['lat'], v['lng'])
+            weight = calculate_time_weight(dist, speed_kmh)
+            
+            add_edge(graph, u['code'], v['code'], line_name, 1, dist, weight)
+            add_edge(graph, v['code'], u['code'], line_name, 2, dist, weight)
+
+def generate_walking_edges(metadata, graph):
+    print("Generating Walking & Transfer Edges...")
+    grid = {}
+    grid_size = 0.005 
+    
+    for code, data in metadata.items():
+        key = get_grid_key(data['lat'], data['lng'], grid_size)
+        if key not in grid: grid[key] = []
+        grid[key].append(code)
+
+    count = 0
+    for code, data in metadata.items():
+        lat, lng = data['lat'], data['lng']
+        center_key = get_grid_key(lat, lng, grid_size)
+        
+        candidates = []
+        for x in [-1, 0, 1]:
+            for y in [-1, 0, 1]:
+                k = (center_key[0] + x, center_key[1] + y)
+                if k in grid: candidates.extend(grid[k])
+        
+        for target in candidates:
+            if code == target: continue
+            
+            t_data = metadata[target]
+            dist = haversine_distance(lat, lng, t_data['lat'], t_data['lng'])
+            
+            if dist <= MAX_WALK_RADIUS_KM:
+                weight = calculate_time_weight(dist, WALK_SPEED_KMH)
+                add_edge(graph, code, target, 'WALK', 0, dist, weight)
+                count += 1
+                
+    print(f"Generated {count} walking connections.")
+
+def main():
+    if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)
+    
+    stops_raw = fetch_lta_data('BusStops')
+    routes_raw = fetch_lta_data('BusRoutes')
+    mrt_raw = load_local_json('mrt_stations.json')
+    lrt_raw = load_local_json('lrt_stations.json')
+    
+    if not stops_raw or not routes_raw:
+        print("Critical: Missing bus data.")
+        return
+
+    graph = {}
+    metadata = {}
+    
+    # Process Bus Metadata
+    for stop in stops_raw:
+        metadata[stop['BusStopCode']] = {
+            'lat': float(stop['Latitude']),
+            'lng': float(stop['Longitude']),
+            'name': stop['Description'],
+            'road': stop['RoadName'],
+            'type': 'BUS'
+        }
+
+    build_bus_graph(routes_raw, graph)
+    build_rail_graph(mrt_raw, graph, metadata, MRT_SPEED_KMH, 'MRT')
+    build_rail_graph(lrt_raw, graph, metadata, LRT_SPEED_KMH, 'LRT')
+    generate_walking_edges(metadata, graph)
+
+    print("Saving files...")
+    with open(f'{OUTPUT_DIR}/stops_metadata.json', 'w') as f:
+        json.dump(metadata, f)
+    with open(f'{OUTPUT_DIR}/transit_graph.json', 'w') as f:
+        json.dump(graph, f)
+
+    print(f"Done. Nodes: {len(graph)}. Metadata: {len(metadata)}")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="src/utils/routeFormatter.ts">
+import { getServiceType } from './transportUtils';
+import type { TripLeg, Metadata, PathStep } from '../types/transport';
+
+export { type TripLeg }; 
+
+export const formatRoute = (path: PathStep[], metadata: Metadata): TripLeg[] => {
+  if (path.length === 0) return [];
+
+  const legs: TripLeg[] = [];
+  
+  // Initialize first leg
+  let currentLeg: TripLeg = {
+    type: getServiceType(path[0].service),
+    service: path[0].service,
+    startStopId: path[0].from,
+    startStopName: metadata[path[0].from]?.name || path[0].from,
+    endStopId: path[0].to,
+    endStopName: metadata[path[0].to]?.name || path[0].to,
+    stopCount: 1,
+    duration: path[0].weight,
+  };
+
+  for (let i = 1; i < path.length; i++) {
+    const step = path[i];
+    const stepType = getServiceType(step.service);
+
+    // Continue leg if service is identical
+    if (step.service === currentLeg.service) {
+      currentLeg.endStopId = step.to;
+      currentLeg.endStopName = metadata[step.to]?.name || step.to;
+      currentLeg.stopCount++;
+      currentLeg.duration += step.weight;
+    } else {
+      // Push finished leg
+      legs.push(currentLeg);
+
+      // Start new leg
+      currentLeg = {
+        type: stepType,
+        service: step.service,
+        startStopId: step.from,
+        startStopName: metadata[step.from]?.name || step.from,
+        endStopId: step.to,
+        endStopName: metadata[step.to]?.name || step.to,
+        stopCount: 1,
+        duration: step.weight,
+      };
+    }
+  }
+  
+  // Push the final leg
+  legs.push(currentLeg);
+  
+  return legs;
+};
+</file>
+
+<file path="src/workers/pathfinder.worker.ts">
+import { MinHeap } from '../utils/MinHeap';
+import { getServiceType } from '../utils/transportUtils';
+
+interface Edge {
+    service: string;
+    direction: number;
+    distance: number;
+    weight: number;
+}
+
+interface Graph {
+    [key: string]: {
+        [key: string]: Edge[];
+    };
+}
+
+interface PathStep {
+    from: string;
+    to: string;
+    service: string;
+    direction: number;
+    weight: number;
+}
+
+interface PreviousStep {
+    node: string;
+    edge: Edge;
+}
+
+interface RouteOption {
+    id: string;
+    label: string;
+    path: PathStep[];
+    totalDuration: number;
+}
+
+// CONSTANTS
+const BASE_TRANSFER_COST = 300; // 5 minutes base wait time per transfer
+const DIRECT_ROUTE_PENALTY = 600; // Additional penalty for "Less Transfers" mode
+const WALK_COST_MULTIPLIER = 2.0; // 1 min walk = 2 mins "pain" to prioritize transit
+
+let graph: Graph | null = null;
+
+const initGraph = async () => {
+    try {
+        const response = await fetch('/data/transit_graph.json');
+        graph = await response.json();
+        console.log(`Worker: Graph loaded. Nodes: ${Object.keys(graph || {}).length}`);
+    } catch (error) {
+        console.error('Worker: Failed to load graph', error);
+    }
+};
+
+initGraph();
+
+// UPDATED: Added excludedModes parameter
+const findPath = (
+    startNode: string, 
+    endNode: string, 
+    transferPenalty: number = 0,
+    excludedModes: Set<string> = new Set()
+) => {
+    if (!graph) return { error: 'Graph not loaded' };
+    if (!graph[startNode]) return { error: `Start Node ${startNode} not found` };
+    if (!graph[endNode]) return { error: `End Node ${endNode} not found` };
+
+    const distances: { [key: string]: number } = {};
+    const previous: { [key: string]: PreviousStep | null } = {};
+    const pq = new MinHeap<string>();
+
+    distances[startNode] = 0;
+    pq.push(startNode, 0);
+
+    const visited = new Set<string>();
+    let iterations = 0;
+    const MAX_ITERATIONS = 100000; 
+
+    try {
+        while (pq.length > 0) {
+            iterations++;
+            if (iterations > MAX_ITERATIONS) return { error: 'Computation timed out' };
+
+            const current = pq.pop();
+            if (!current) break;
+            const u = current.element;
+
+            if (current.priority > (distances[u] ?? Infinity)) continue;
+            if (u === endNode) break;
+            
+            if (visited.has(u)) continue;
+            visited.add(u);
+
+            const neighbors = graph[u];
+            if (!neighbors) continue;
+
+            const incomingStep = previous[u];
+            const incomingService = incomingStep ? incomingStep.edge.service : null;
+
+            for (const [v, edges] of Object.entries(neighbors)) {
+                if (!edges || edges.length === 0) continue;
+
+                let bestEdge: Edge | null = null;
+                let bestCost = Infinity;
+
+                for (const edge of edges) {
+                    // --- NEW: FILTERING LOGIC ---
+                    const mode = getServiceType(edge.service);
+                    // If mode is excluded AND it's not walking, skip it.
+                    if (mode !== 'WALK' && excludedModes.has(mode)) {
+                        continue;
+                    }
+                    // ----------------------------
+
+                    let weight = edge.weight;
+
+                    if (edge.service === 'WALK') {
+                        weight *= WALK_COST_MULTIPLIER;
+                    }
+
+                    let penalty = 0;
+                    if (incomingService && incomingService !== edge.service) {
+                        penalty = BASE_TRANSFER_COST + transferPenalty;
+                    }
+
+                    const currentEdgeCost = weight + penalty;
+                    
+                    if (currentEdgeCost < bestCost) {
+                        bestCost = currentEdgeCost;
+                        bestEdge = edge;
+                    }
+                }
+
+                if (!bestEdge) continue;
+
+                const alt = current.priority + bestCost;
+
+                if (alt < (distances[v] || Infinity)) {
+                    distances[v] = alt;
+                    previous[v] = { node: u, edge: bestEdge! };
+                    pq.push(v, alt);
+                }
+            }
+        }
+    } catch (err: any) {
+        return { error: `Worker Error: ${err.message}` };
+    }
+
+    if (startNode !== endNode && !previous[endNode]) {
+        return { error: 'No path found' };
+    }
+
+    const path: PathStep[] = [];
+    let curr: string | null = endNode;
+    let stepCount = 0;
+    let trueDuration = 0;
+
+    while (curr !== null) {
+        if (stepCount++ > 2000) return { error: 'Path reconstruction error' };
+        if (curr === startNode) break;
+
+        const step: PreviousStep | null | undefined = previous[curr];
+        if (!step) break;
+
+        path.unshift({
+            from: step.node,
+            to: curr,
+            service: step.edge.service,
+            direction: step.edge.direction,
+            weight: step.edge.weight
+        });
+        
+        trueDuration += step.edge.weight;
+        curr = step.node;
+    }
+
+    return { path, totalDuration: trueDuration };
+};
+
+const pathsAreEqual = (pathA: PathStep[], pathB: PathStep[]) => {
+    if (pathA.length !== pathB.length) return false;
+    for (let i = 0; i < pathA.length; i++) {
+        if (pathA[i].from !== pathB[i].from || 
+            pathA[i].to !== pathB[i].to || 
+            pathA[i].service !== pathB[i].service) {
+            return false;
+        }
+    }
+    return true;
+};
+
+self.onmessage = (e: MessageEvent) => {
+    const { type, payload } = e.data;
+    if (type === 'CALCULATE') {
+        if (!graph) {
+            self.postMessage({ type: 'ERROR', error: 'Graph not ready' });
+            return;
+        }
+
+        // Extract exclusions from payload
+        // payload.excludedModes is expected to be an array of strings (e.g. ['BUS', 'MRT'])
+        const excludedModes = new Set<string>(payload.excludedModes || []);
+
+        // 1. Calculate Fastest Route
+        const fastestResult = findPath(payload.start, payload.end, 0, excludedModes);
+        
+        if (fastestResult.error) {
+            self.postMessage({ type: 'RESULT', result: { error: fastestResult.error } });
+            return;
+        }
+
+        const routes: RouteOption[] = [];
+        
+        // Add Fastest
+        if (fastestResult.path) {
+            routes.push({
+                id: 'fastest',
+                label: 'Fastest',
+                path: fastestResult.path,
+                totalDuration: fastestResult.totalDuration
+            });
+        }
+
+        // 2. Calculate Direct Route (Less Transfers)
+        // We only try to find a "direct" route if we found a fastest one first.
+        if (fastestResult.path) {
+            const directResult = findPath(payload.start, payload.end, DIRECT_ROUTE_PENALTY, excludedModes);
+            
+            if (!directResult.error && directResult.path) {
+                const isDifferent = !pathsAreEqual(fastestResult.path, directResult.path);
+                
+                if (isDifferent) {
+                    routes.push({
+                        id: 'direct',
+                        label: 'Less Transfers',
+                        path: directResult.path,
+                        totalDuration: directResult.totalDuration
+                    });
+                }
+            }
+        }
+
+        self.postMessage({ type: 'RESULT', result: { routes } });
+    }
+};
+</file>
+
+</files>

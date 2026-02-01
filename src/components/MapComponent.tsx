@@ -1,18 +1,27 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, CircleMarker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import PathfinderWorker from '../workers/pathfinder.worker?worker';
-
-import { formatRoute, type TripLeg } from '../utils/routeFormatter';
-import { fetchArrivals, getMinutesToArrival, type ServiceArrival } from '../services/ltaService';
+import { fetchArrivals, type ServiceArrival } from '../services/ltaService';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { LocationSearch } from './LocationSearch';
+import { RouteOptionsBar } from './RouteOptions/RouteOptionsBar';
+import { RouteList } from './RouteList/RouteList';
+import { processRoutes } from '../utils/routeProcessor';
+import type { 
+    SortOption, 
+    TransportMode, 
+    Metadata, 
+    RouteOption, 
+    ProcessedRoute,
+    RouteSegment
+} from '../types/transport';
 
+// Icons setup
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-// Fix Leaflet Icon
 let DefaultIcon = L.icon({
     iconUrl: icon,
     shadowUrl: iconShadow,
@@ -22,16 +31,6 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198];
-
-interface Metadata {
-    [key: string]: {
-        lat: number;
-        lng: number;
-        name: string;
-        road: string;
-        type?: 'BUS' | 'MRT' | 'LRT';
-    }
-}
 
 interface SavedPlace {
     id: string;
@@ -47,30 +46,26 @@ interface CustomLocation {
     road: string;
 }
 
-// New Interface for Map Segments
-interface RouteSegment {
-    type: 'BUS' | 'MRT' | 'LRT' | 'WALK';
-    service: string;
-    positions: [number, number][];
-}
-
 const MapComponent: React.FC = () => {
     // 1. Core State
     const [metadata, setMetadata] = useState<Metadata | null>(null);
-    const [stats, setStats] = useState<string>('Initializing...');
+    const [stats, setStats] = useState<string>("Initializing...");
+
+    // 2. Route State
+    const [processedRoutes, setProcessedRoutes] = useState<ProcessedRoute[]>([]);
+    const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+
+    // 3. Filters & Inputs
+    const [excludedModes, setExcludedModes] = useState<Set<TransportMode>>(new Set());
+    const [activeSort, setActiveSort] = useState<SortOption>('FASTEST');
+    const [startId, setStartId] = useState('84009'); // Bedok
+    const [endId, setEndId] = useState('01012'); // Hotel Grand Pacific
     
-    // 2. Route & Instructions
-    // REPLACED: routePath with routeSegments
-    const [routeSegments, setRouteSegments] = useState<RouteSegment[]>([]);
-    const [instructions, setInstructions] = useState<TripLeg[]>([]);
-    
-    // 3. Real-Time Data
+    // 4. Real-Time Data
     const [arrivalData, setArrivalData] = useState<ServiceArrival[]>([]);
     const [isSimulated, setIsSimulated] = useState(false);
-
-    // 4. Inputs & Persistence
-    const [startId, setStartId] = useState('84009');
-    const [endId, setEndId] = useState('01012');
+    
+    // 5. User Data
     const [savedPlaces, setSavedPlaces] = useLocalStorage<SavedPlace[]>('singatransit_favs', []);
     const [customLocations, setCustomLocations] = useState<Record<string, CustomLocation>>({});
 
@@ -80,424 +75,262 @@ const MapComponent: React.FC = () => {
     useEffect(() => {
         fetch('/data/stops_metadata.json')
             .then(res => res.json())
-            .then((data) => {
+            .then((data: Metadata) => {
                 setMetadata(data);
                 setStats(`Ready. Loaded ${Object.keys(data).length} nodes.`);
             })
-            .catch(() => setStats('Failed to load metadata.'));
+            .catch(() => setStats("Failed to load metadata."));
     }, []);
 
     // --- EFFECT: Worker Setup ---
     useEffect(() => {
         const worker = new PathfinderWorker();
         workerRef.current = worker;
+
         worker.onmessage = (e) => {
-            const { type, result, error } = e.data;
+            const { type, result } = e.data;
+            
             if (type === 'RESULT') {
                 if (result.error) {
                     setStats(`Error: ${result.error}`);
+                    setProcessedRoutes([]);
+                } else if (result.routes && result.routes.length > 0) {
+                    if (metadata) {
+                        const processed = processRoutes(result.routes as RouteOption[], metadata);
+                        setProcessedRoutes(processed);
+                        
+                        if (processed.length > 0) {
+                            setSelectedRouteId(processed[0].id);
+                        }
+                        setStats(`Found ${processed.length} routes.`);
+                    }
                 } else {
-                    handleRouteSuccess(result.path, result.totalDuration);
+                    setStats("No routes found with current filters.");
+                    setProcessedRoutes([]);
                 }
             } else if (type === 'ERROR') {
-                setStats(`Worker Error: ${error}`);
+                setStats(`Worker Error: ${e.data.error}`);
             }
         };
+
         return () => worker.terminate();
-    }, [metadata]); 
+    }, [metadata]);
 
-    // --- HELPERS: Color Mapping ---
-    const getServiceType = (service: string): 'BUS' | 'MRT' | 'LRT' | 'WALK' => {
-        if (service === 'WALK') return 'WALK';
-        const mrtLines = ['NSL', 'EWL', 'NEL', 'CCL', 'DTL', 'TEL'];
-        if (mrtLines.some(line => service.startsWith(line))) return 'MRT';
-        const lrtLines = ['BPLrt', 'SKLrt', 'PGLrt', 'LRT']; 
-        if (lrtLines.some(line => service.includes(line)) || service.endsWith('LRT')) return 'LRT';
-        return 'BUS';
-    };
-
-    const getLineColor = (service: string, type: string) => {
-        if (type === 'WALK') return '#7f8c8d'; // Grey
-        if (type === 'BUS') return '#2980b9';  // Blue
-
-        // MRT Official Colors
-        if (service.startsWith('NSL')) return '#d63031'; // Red (North South)
-        if (service.startsWith('EWL')) return '#009432'; // Green (East West)
-        if (service.startsWith('NEL')) return '#8e44ad'; // Purple (North East)
-        if (service.startsWith('CCL')) return '#fa8231'; // Orange (Circle)
-        if (service.startsWith('DTL')) return '#0984e3'; // Blue (Downtown)
-        if (service.startsWith('TEL')) return '#634206'; // Brown (Thomson)
-        
-        // LRT
-        if (type === 'LRT') return '#57606f'; // Dark Grey for LRT
-
-        return '#2980b9'; // Fallback Blue
-    };
-
-    // --- HANDLERS ---
-
-    const handleRouteSuccess = (path: any[], duration: number) => {
-        if (!metadata || path.length === 0) return;
-        setStats(`Route Found! ~${Math.round(duration / 60)} mins.`);
-
-        // --- NEW: BUILD POLYLINE SEGMENTS ---
-        const segments: RouteSegment[] = [];
-        let currentPoints: [number, number][] = [];
-        
-        // Initialize with first point
-        const startNode = metadata[path[0].from];
-        if (startNode) currentPoints.push([startNode.lat, startNode.lng]);
-
-        let currentService = path[0].service;
-        let currentType = getServiceType(currentService);
-
-        for (let i = 0; i < path.length; i++) {
-            const step = path[i];
-            const nextNode = metadata[step.to];
-            
-            if (!nextNode) continue;
-
-            const nextPoint: [number, number] = [nextNode.lat, nextNode.lng];
-            
-            // Check if service changed
-            if (step.service !== currentService) {
-                // 1. Push completed segment
-                if (currentPoints.length > 0) {
-                    segments.push({
-                        type: currentType,
-                        service: currentService,
-                        positions: currentPoints
-                    });
-                }
-
-                // 2. Start new segment
-                // Important: The new segment must start where the last one ended (visual continuity)
-                const lastPoint = currentPoints[currentPoints.length - 1];
-                currentPoints = [lastPoint, nextPoint]; // Start new line from previous point to current target
-                
-                currentService = step.service;
-                currentType = getServiceType(step.service);
-            } else {
-                // Continue same segment
-                currentPoints.push(nextPoint);
+    // --- SORTING LOGIC ---
+    const sortedRoutes = useMemo(() => {
+        if (!processedRoutes.length) return [];
+        return [...processedRoutes].sort((a, b) => {
+            if (activeSort === 'LESS_TRANSFERS') {
+                return a.summary.transferCount - b.summary.transferCount;
+            } else if (activeSort === 'LESS_WALKING') {
+                return a.raw.totalDuration - b.raw.totalDuration; 
             }
-        }
+            return a.raw.totalDuration - b.raw.totalDuration;
+        });
+    }, [processedRoutes, activeSort]);
 
-        // Push final segment
-        if (currentPoints.length > 0) {
-            segments.push({
-                type: currentType,
-                service: currentService,
-                positions: currentPoints
-            });
-        }
 
-        setRouteSegments(segments);
-
-        // --- Format Instructions & Fetch Real-time ---
-        const legs = formatRoute(path, metadata);
-        setInstructions(legs);
-        
-        if (legs.length > 0 && legs[0].type === 'BUS') {
-            const firstLeg = legs[0];
-            fetchArrivals(firstLeg.startStopId).then(data => {
-                const safeData = data || [];
-                const hasTargetBus = safeData.some(s => s.ServiceNo === firstLeg.service);
-                if (!hasTargetBus) {
-                     setArrivalData(generateMockArrivals(firstLeg.service));
-                     setIsSimulated(true);
-                } else {
-                    setArrivalData(safeData);
-                    setIsSimulated(false);
-                }
-            }).catch(() => {
-                setArrivalData(generateMockArrivals(firstLeg.service));
-                setIsSimulated(true);
-            });
-        } else {
-            setArrivalData([]);
-        }
-    };
-
-    const generateMockArrivals = (targetService: string): ServiceArrival[] => {
-        return [{
-            ServiceNo: targetService,
-            Operator: "SIM",
-            NextBus: { EstimatedArrival: new Date(Date.now() + 300000).toISOString(), Load: "SEA", Feature: "WAB", Type: "DD", OriginCode: "0", DestinationCode: "0", Latitude: "0", Longitude: "0", VisitNumber: "1" },
-            NextBus2: { EstimatedArrival: "", Load: "", Feature: "", Type: "", OriginCode: "", DestinationCode: "", Latitude: "", Longitude: "", VisitNumber: "" },
-            NextBus3: { EstimatedArrival: "", Load: "", Feature: "", Type: "", OriginCode: "", DestinationCode: "", Latitude: "", Longitude: "", VisitNumber: "" }
-        }];
-    };
-
+    // --- ACTION: Calculate Route ---
     const handleCalculate = () => {
-        if (!workerRef.current) return;
-        setStats('Calculating...');
-        setRouteSegments([]); // Clear map
-        setInstructions([]);
+        if (!workerRef.current || !metadata || !startId || !endId) return;
+
+        setStats("Calculating...");
+        setProcessedRoutes([]); 
         setArrivalData([]);
-        setIsSimulated(false);
         
-        // Determine if start/end are custom place IDs
-        const startNode = startId.startsWith('place:') ? findNearestStop(startId) : startId;
-        const endNode = endId.startsWith('place:') ? findNearestStop(endId) : endId;
-        
-        workerRef.current.postMessage({ type: 'CALCULATE', payload: { start: startNode, end: endNode } });
+        const getEffectiveId = (id: string) => {
+            if (id.startsWith('place:')) {
+               return findNearestStop(id);
+            }
+            return id;
+        };
+
+        const effStart = getEffectiveId(startId);
+        const effEnd = getEffectiveId(endId);
+
+        workerRef.current.postMessage({
+            type: 'CALCULATE',
+            payload: {
+                start: effStart,
+                end: effEnd,
+                excludedModes: Array.from(excludedModes)
+            }
+        });
     };
 
     const findNearestStop = (placeId: string): string => {
-        // Extract lat/lng from placeId
         const match = placeId.match(/place:([\d\.]+),([\d\.]+):/);
-        if (!match || !metadata) return '01012'; // fallback
-        
+        if (!match || !metadata) return '01012'; 
         const lat = parseFloat(match[1]);
         const lng = parseFloat(match[2]);
-        
         let nearestId = '';
         let nearestDist = Infinity;
-        
         for (const [id, node] of Object.entries(metadata)) {
             const dx = node.lat - lat;
             const dy = node.lng - lng;
-            const dist = dx * dx + dy * dy; // squared distance
+            const dist = dx * dx + dy * dy;
             if (dist < nearestDist) {
                 nearestDist = dist;
                 nearestId = id;
             }
         }
-        
         return nearestId || '01012';
     };
-
+    
     const saveCurrentPlace = (type: 'start' | 'end') => {
         const idToSave = type === 'start' ? startId : endId;
         const name = metadata?.[idToSave]?.name || idToSave;
-        const label = prompt(`Enter a name for this location (e.g. Home, Work):`, name);
-        
+        const label = prompt(`Enter a name for this location:`, name);
         if (label) {
-            const newPlace: SavedPlace = {
-                id: Date.now().toString(),
-                stopId: idToSave,
-                label: label
-            };
-            setSavedPlaces([...savedPlaces, newPlace]);
+            setSavedPlaces([...savedPlaces, { id: Date.now().toString(), stopId: idToSave, label }]);
         }
     };
 
-    const deletePlace = (id: string, e: React.MouseEvent) => {
-        e.stopPropagation();
-        setSavedPlaces(savedPlaces.filter(p => p.id !== id));
-    };
+    // --- EFFECT: Fetch Real-Time Data ---
+    useEffect(() => {
+        if (!selectedRouteId || processedRoutes.length === 0) return;
 
-    const loadPlace = (place: SavedPlace) => {
-        if (startId === '') setStartId(place.stopId);
-        else setEndId(place.stopId);
-    };
+        const selectedRoute = processedRoutes.find(r => r.id === selectedRouteId);
+        if (!selectedRoute) return;
 
-    // --- RENDER HELPERS ---
-    
-    // Calculate start/end markers from segments
-    const startPos = routeSegments.length > 0 ? routeSegments[0].positions[0] : null;
-    const endPos = routeSegments.length > 0 
-        ? routeSegments[routeSegments.length - 1].positions[routeSegments[routeSegments.length - 1].positions.length - 1] 
-        : null;
+        const firstLeg = selectedRoute.legs[0];
+
+        if (firstLeg && firstLeg.type === 'BUS') {
+            fetchArrivals(firstLeg.startStopId)
+                .then(data => {
+                    const safeData = data || [];
+                    const hasTargetBus = safeData.some(s => s.ServiceNo === firstLeg.service);
+                    setArrivalData(safeData);
+                    setIsSimulated(!hasTargetBus); 
+                })
+                .catch(() => {
+                    setArrivalData([]);
+                    setIsSimulated(true);
+                });
+        }
+    }, [selectedRouteId, processedRoutes]);
+
+    const getSegmentStyle = (segment: RouteSegment, isSelected: boolean) => {
+        const baseOpacity = isSelected ? 1 : 0.3;
+        const weight = isSelected ? 6 : 4;
+        const zIndex = isSelected ? 100 : 1;
+
+        let color = '#7f8c8d'; 
+        if (segment.type === 'MRT') color = '#e74c3c'; 
+        if (segment.type === 'LRT') color = '#8e44ad';
+        if (segment.type === 'BUS') color = '#2980b9';
+        
+        const dashArray = segment.type === 'WALK' ? '5, 10' : undefined;
+
+        return { color, weight, opacity: baseOpacity, zIndex, dashArray };
+    };
 
     return (
         <div className="app-container">
-            {/* Sidebar */}
             <div className="sidebar">
                 <div className="sidebar-content">
                     <h2 style={{ marginTop: 0 }}>SingaTransit</h2>
                     
                     <div className="input-group">
-                        <LocationSearch
-                            label="FROM"
-                            initialValue={startId}
+                        <LocationSearch 
+                            label="FROM" 
+                            initialValue={startId} 
                             onSelect={(id) => {
                                 setStartId(id);
-                                // If it's a custom place, store its coordinates
                                 if (id.startsWith('place:')) {
-                                    const match = id.match(/place:([\d\.]+),([\d\.]+):(.+)/);
-                                    if (match) {
-                                        const [, lat, lng, name] = match;
-                                        setCustomLocations(prev => ({
-                                            ...prev,
-                                            [id]: {
-                                                id,
-                                                name,
-                                                lat: parseFloat(lat),
-                                                lng: parseFloat(lng),
-                                                road: ''
-                                            }
-                                        }));
-                                    }
+                                     const match = id.match(/place:([\d\.]+),([\d\.]+):(.+)/);
+                                     if (match) {
+                                         const [, lat, lng, name] = match;
+                                         setCustomLocations(prev => ({ ...prev, [id]: { id, name, lat: parseFloat(lat), lng: parseFloat(lng), road: '' } }));
+                                     }
                                 }
                             }}
                             onSave={() => saveCurrentPlace('start')}
                         />
-                        
-                        <LocationSearch
-                            label="TO"
-                            initialValue={endId}
+                        <LocationSearch 
+                            label="TO" 
+                            initialValue={endId} 
                             onSelect={(id) => {
                                 setEndId(id);
                                 if (id.startsWith('place:')) {
-                                    const match = id.match(/place:([\d\.]+),([\d\.]+):(.+)/);
-                                    if (match) {
-                                        const [, lat, lng, name] = match;
-                                        setCustomLocations(prev => ({
-                                            ...prev,
-                                            [id]: {
-                                                id,
-                                                name,
-                                                lat: parseFloat(lat),
-                                                lng: parseFloat(lng),
-                                                road: ''
-                                            }
-                                        }));
-                                    }
+                                     const match = id.match(/place:([\d\.]+),([\d\.]+):(.+)/);
+                                     if (match) {
+                                         const [, lat, lng, name] = match;
+                                         setCustomLocations(prev => ({ ...prev, [id]: { id, name, lat: parseFloat(lat), lng: parseFloat(lng), road: '' } }));
+                                     }
                                 }
                             }}
                             onSave={() => saveCurrentPlace('end')}
                         />
-                        
-                        <button className="action-btn" onClick={handleCalculate}>
+
+                        <RouteOptionsBar 
+                            activeSort={activeSort}
+                            excludedModes={excludedModes}
+                            onSortChange={setActiveSort}
+                            onModeToggle={(mode) => {
+                                const next = new Set(excludedModes);
+                                if (next.has(mode)) next.delete(mode);
+                                else next.add(mode);
+                                setExcludedModes(next);
+                            }}
+                        />
+
+                        <button className="action-btn" onClick={handleCalculate} style={{ marginTop: '10px' }}>
                             Find Route
                         </button>
-                        
-                        <div style={{ marginTop: '10px', fontSize: '12px', color: stats.includes('Error') ? 'red' : '#00ff00', fontWeight: 'bold' }}>
-                            {stats}
-                        </div>
                     </div>
 
-                    {/* SAVED PLACES */}
-                    {instructions.length === 0 && (
-                        <div className="favorites-list">
+                    <div className="status-bar" style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
+                        {stats}
+                    </div>
+
+                    <RouteList 
+                        routes={sortedRoutes}
+                        selectedId={selectedRouteId}
+                        onSelect={setSelectedRouteId}
+                        arrivalData={arrivalData}
+                        isSimulated={isSimulated}
+                    />
+
+                    {processedRoutes.length === 0 && savedPlaces.length > 0 && (
+                        <div className="favorites-list" style={{ marginTop: '20px' }}>
                             <h3 style={{ borderBottom: '1px solid #444', paddingBottom: '5px', marginTop: 0 }}>Saved Places</h3>
-                            {savedPlaces.length === 0 && <p style={{color: '#666', fontSize: '12px'}}>No saved places. Tap ★ to save.</p>}
-                            
                             {savedPlaces.map(place => (
-                                <div key={place.id} className="fav-item" onClick={() => loadPlace(place)}>
-                                    <div>
-                                        <div style={{fontWeight: 'bold', fontSize: '14px'}}>{place.label}</div>
-                                        <div style={{color: '#888', fontSize: '11px'}}>{place.stopId}</div>
-                                    </div>
-                                    <button 
-                                        onClick={(e) => deletePlace(place.id, e)}
-                                        style={{background: 'none', border: 'none', color: '#ff4444', cursor: 'pointer', fontSize: '16px'}}
-                                    >
-                                        ×
-                                    </button>
+                                <div key={place.id} className="fav-item" onClick={() => { setStartId(place.stopId); }}>
+                                    <div>{place.label}</div>
                                 </div>
                             ))}
-                        </div>
-                    )}
-
-                    {/* ITINERARY */}
-                    {instructions.length > 0 && (
-                        <div className="itinerary-list">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                                <h3 style={{ margin: 0 }}>Itinerary</h3>
-                                <button onClick={() => { setInstructions([]); setRouteSegments([]); }} style={{background: 'none', border: 'none', color: '#aaa', fontSize: '12px', cursor: 'pointer'}}>Close X</button>
-                            </div>
-                            
-                            {instructions.map((leg, idx) => {
-                                let nextBusMins: number | null = null;
-                                if (leg.type === 'BUS') {
-                                    const liveInfo = arrivalData.find(s => s.ServiceNo === leg.service);
-                                    if (liveInfo?.NextBus?.EstimatedArrival) {
-                                        nextBusMins = getMinutesToArrival(liveInfo.NextBus.EstimatedArrival);
-                                    }
-                                }
-
-                                // CSS color for the text based on mode
-                                const color = getLineColor(leg.service, leg.type);
-                                
-                                return (
-                                    <div key={idx} style={{ marginBottom: '15px', paddingLeft: '10px', borderLeft: `4px solid ${color}` }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <div style={{ fontSize: '16px', fontWeight: 'bold', color: color }}>
-                                                {leg.type === 'WALK' ? 'Walk' : `${leg.type} ${leg.service}`}
-                                            </div>
-                                            
-                                            {leg.type === 'BUS' && (
-                                                <div style={{ 
-                                                    fontSize: '11px', padding: '2px 6px', borderRadius: '4px',
-                                                    backgroundColor: isSimulated ? '#d35400' : (nextBusMins !== null ? '#27ae60' : '#7f8c8d'), 
-                                                    color: 'white'
-                                                }}>
-                                                    {nextBusMins !== null ? `${nextBusMins} min` : 'No Data'}{isSimulated && ' (Sim)'}
-                                                </div>
-                                            )}
-                                        </div>
-                                        
-                                        <div style={{ fontSize: '12px', color: '#ddd' }}>Board: {leg.startStopName}</div>
-                                        {leg.type === 'WALK' ? (
-                                             <div style={{ fontSize: '11px', color: '#888', fontStyle: 'italic', margin: '4px 0' }}>
-                                                ~{Math.ceil(leg.duration / 60)} mins
-                                             </div>
-                                        ) : (
-                                            <div style={{ fontSize: '11px', color: '#888', margin: '4px 0' }}>
-                                                ↓ {leg.stopCount} stops (~{Math.ceil(leg.duration / 60)} mins)
-                                            </div>
-                                        )}
-                                        <div style={{ fontSize: '12px', color: '#ddd' }}>Alight: {leg.endStopName}</div>
-                                    </div>
-                                );
-                            })}
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* Map Area */}
             <div className="map-container">
-                <MapContainer 
-                    center={SINGAPORE_CENTER} 
-                    zoom={12} 
-                    scrollWheelZoom={true}
-                    zoomControl={false}
-                    style={{ height: "100%", width: "100%" }}
-                >
-                    <TileLayer attribution='&copy; OneMap' url="https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png" />
-                    
-                    {/* Render Segments */}
-                    {routeSegments.map((segment, index) => (
-                        <Polyline 
-                            key={index}
-                            positions={segment.positions}
-                            pathOptions={{
-                                color: getLineColor(segment.service, segment.type),
-                                weight: 6,
-                                opacity: 0.9,
-                                dashArray: segment.type === 'WALK' ? '5, 10' : undefined // Dotted line for walking
-                            }}
-                        />
-                    ))}
+                <MapContainer center={SINGAPORE_CENTER} zoom={12} style={{ height: '100%', width: '100%' }}>
+                    {/* CORRECTED URL HERE */}
+                    <TileLayer
+                        url="https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png"
+                        attribution='Map data © contributors, <a href="https://www.sla.gov.sg/">Singapore Land Authority</a>'
+                    />
 
-                    {/* Start/End Markers */}
-                    {startPos && <Marker position={startPos}><Popup>Start</Popup></Marker>}
-                    {endPos && <Marker position={endPos}><Popup>End</Popup></Marker>}
+                    {sortedRoutes.map(route => {
+                        const isSelected = route.id === selectedRouteId;
+                        return route.segments.map((seg, idx) => (
+                            <Polyline
+                                key={`${route.id}-${idx}`}
+                                positions={seg.positions}
+                                pathOptions={getSegmentStyle(seg, isSelected)}
+                                eventHandlers={{
+                                    click: () => setSelectedRouteId(route.id)
+                                }}
+                            />
+                        ));
+                    })}
                     
-                    {/* Custom Location Markers */}
-                    {Object.values(customLocations).map(loc => (
-                        <Marker
-                            key={loc.id}
-                            position={[loc.lat, loc.lng]}
-                            icon={L.divIcon({
-                                html: `<div style="background-color: #27ae60; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
-                                iconSize: [16, 16],
-                                className: 'custom-location-marker'
-                            })}
-                        >
-                            <Popup>{loc.name}</Popup>
-                        </Marker>
-                    ))}
-                    
-                    {/* Optional: Add small circles at transfer points */}
-                    {routeSegments.length > 1 && routeSegments.slice(0, -1).map((seg, i) => {
+                     {sortedRoutes.find(r => r.id === selectedRouteId)?.segments.slice(0, -1).map((seg, i) => {
                         const lastPos = seg.positions[seg.positions.length - 1];
                         return (
-                            <CircleMarker 
+                             <CircleMarker 
                                 key={`transfer-${i}`} 
                                 center={lastPos} 
                                 radius={4} 
@@ -505,6 +338,17 @@ const MapComponent: React.FC = () => {
                             />
                         )
                     })}
+
+                    {metadata && metadata[startId] && (
+                        <Marker position={[metadata[startId].lat, metadata[startId].lng]}>
+                            <Popup>Start: {metadata[startId].name}</Popup>
+                        </Marker>
+                    )}
+                    {metadata && metadata[endId] && (
+                        <Marker position={[metadata[endId].lat, metadata[endId].lng]}>
+                            <Popup>End: {metadata[endId].name}</Popup>
+                        </Marker>
+                    )}
                 </MapContainer>
             </div>
         </div>

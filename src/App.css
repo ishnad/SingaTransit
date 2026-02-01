@@ -90,6 +90,48 @@ body {
   transform: scale(0.98);
 }
 
+/* Route Selection Tabs */
+.route-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  background-color: #252525;
+  padding: 5px;
+  border-radius: 6px;
+}
+
+.route-tab {
+  flex: 1;
+  background: none;
+  border: 1px solid transparent;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  color: #888;
+  transition: all 0.2s ease;
+}
+
+.route-tab:hover {
+  background-color: #333;
+}
+
+.route-tab.active {
+  background-color: #333;
+  border-color: var(--primary-color);
+  color: white;
+}
+
+.route-tab-label {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+.route-tab-time {
+  font-size: 14px;
+}
+
 /* Favorites Section */
 .favorites-list {
   margin-top: 20px;
@@ -145,3 +187,285 @@ body {
     font-size: 16px;
   }
 }
+
+/* Route Options Bar */
+.route-options-bar {
+  margin-bottom: 15px;
+}
+
+.sort-section {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.sort-dropdown {
+  background-color: #222;
+  color: white;
+  border: 1px solid #444;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 14px;
+  flex-grow: 1;
+}
+
+/* Filter Chips */
+.mode-filter-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 5px;
+  /* Hide scrollbar but allow scroll */
+  scrollbar-width: none; 
+}
+
+.mode-filter-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  background-color: transparent;
+  border: 1px solid #555;
+  color: #aaa;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.chip.active {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+  color: white;
+  font-weight: 500;
+}
+
+.chip:hover {
+  border-color: #777;
+}
+
+.chip.active:hover {
+  border-color: var(--primary-color);
+  opacity: 0.9;
+}
+
+/* Accordion Styles */
+.accordion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.accordion-item {
+  background-color: #252525;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.accordion-item.active {
+  background-color: #2a2a2a;
+  border-color: var(--primary-color);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.accordion-header {
+  padding: 15px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accordion-header:hover {
+  background-color: #333;
+}
+
+.accordion-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.route-summary-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.mini-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: white;
+  background-color: #555;
+  font-weight: bold;
+}
+
+/* Smooth Accordion Transition Trick */
+.accordion-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease-out;
+}
+
+.accordion-body.open {
+  grid-template-rows: 1fr;
+}
+
+.accordion-content-wrapper {
+  overflow: hidden;
+}
+
+.accordion-inner-padding {
+  padding: 0 15px 15px 15px;
+  border-top: 1px solid #333;
+  margin-top: 5px;
+}
+
+/* --- ROUTE LIST & CARD STYLES --- */
+
+.route-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.route-card {
+  background-color: #252525;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.route-card:hover {
+  background-color: #2a2a2a;
+}
+
+.route-card.selected {
+  border-color: var(--primary-color);
+  background-color: #2c2c2c;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.route-card-header {
+  padding: 15px;
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.duration-info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.duration-mins {
+  font-size: 18px;
+  font-weight: bold;
+  color: white;
+}
+
+.arrival-time {
+  font-size: 14px;
+  color: #888;
+}
+
+.header-sub {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.mode-icons {
+  display: flex;
+  gap: 4px;
+}
+
+.mini-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: bold;
+  color: white;
+  background-color: #555;
+}
+
+.mini-badge.mode-bus { background-color: #2980b9; }
+.mini-badge.mode-mrt { background-color: #e74c3c; }
+.mini-badge.mode-lrt { background-color: #8e44ad; }
+
+/* Accordion Body */
+.route-card-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+  background-color: #222;
+}
+
+.route-card-body.open {
+  max-height: 500px; /* Arbitrary large height for animation */
+  overflow-y: auto;
+  border-top: 1px solid #333;
+}
+
+.body-content {
+  padding: 15px;
+}
+
+/* Leg Items */
+.leg-item {
+  padding-left: 12px;
+  margin-bottom: 15px;
+  border-left: 3px solid #555; /* Default fallback */
+  position: relative;
+}
+
+.leg-item:last-child {
+  margin-bottom: 0;
+}
+
+.leg-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.leg-service {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.leg-desc {
+  font-size: 13px;
+  color: #ddd;
+}
+
+.leg-sub {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.live-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: #7f8c8d;
+  color: white;
+}
+
+.live-badge.live { background-color: #27ae60; }
+.live-badge.sim { background-color: #d35400; }
