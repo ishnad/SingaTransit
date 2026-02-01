@@ -2,9 +2,10 @@ export type TransportMode = 'BUS' | 'MRT' | 'LRT' | 'TRAIN' | 'TRAM' | 'WALK';
 
 export const TRANSPORT_MODES = [
   { id: 'BUS', label: 'Bus' },
-  { id: 'SUBWAY', label: 'Subway' }, // Keeping original IDs if they were SUBWAY/TRAIN in your code, otherwise aligning to MRT/LRT
-  { id: 'TRAIN', label: 'Train' },
-  { id: 'TRAM', label: 'Tram' },
+  { id: 'MRT', label: 'MRT' },  // Changed from SUBWAY to MRT
+  { id: 'LRT', label: 'LRT' },
+  // { id: 'TRAIN', label: 'Train' }, // Optional: Add if needed
+  // { id: 'TRAM', label: 'Tram' },   // Optional: Add if needed
 ] as const;
 
 export type SortOption = 'FASTEST' | 'LESS_TRANSFERS' | 'LESS_WALKING';
@@ -16,12 +17,12 @@ export const SORT_OPTIONS = [
 ] as const;
 
 export interface RouteSegment {
-  mode: TransportMode; // or string if dynamic
+  mode: TransportMode; 
   service: string;
   duration?: number; // in seconds
   distance?: number; // in meters
   positions: [number, number][]; // Lat/Lng array for map
-  type?: string; // Legacy support if needed
+  type?: string; 
 }
 
 export interface Route {
@@ -33,8 +34,6 @@ export interface Route {
   walkingDistance: number;
 }
 
-// --- NEW TYPES FOR UNIFIED ROUTE LIST ---
-
 export interface Metadata {
   [key: string]: {
     name: string;
@@ -45,7 +44,6 @@ export interface Metadata {
   };
 }
 
-// Previously in routeFormatter.ts
 export interface TripLeg {
   type: 'BUS' | 'MRT' | 'LRT' | 'WALK';
   service: string;
@@ -57,7 +55,6 @@ export interface TripLeg {
   duration: number; // in seconds
 }
 
-// Raw output from the Pathfinder Worker
 export interface PathStep {
   from: string;
   to: string;
@@ -68,23 +65,23 @@ export interface PathStep {
 
 export interface RouteOption {
   id: string;
-  label: string; // e.g., "Fastest", "Less Transfers"
+  label: string; 
   path: PathStep[];
   totalDuration: number;
 }
 
 export interface RouteSummary {
-  duration: number; // Minutes
-  arrivalTime: string; // "14:35"
-  modes: string[]; // ["BUS", "MRT"] unique list for icons
+  duration: number; 
+  arrivalTime: string; 
+  modes: string[]; 
   transferCount: number;
-  cost?: number; // Optional
+  cost?: number; 
 }
 
 export interface ProcessedRoute {
   id: string;
   summary: RouteSummary;
-  legs: TripLeg[]; // For the text itinerary
-  segments: RouteSegment[]; // For the map polylines
-  raw: RouteOption; // Keep original reference
+  legs: TripLeg[]; 
+  segments: RouteSegment[]; 
+  raw: RouteOption; 
 }

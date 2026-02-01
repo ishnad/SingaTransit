@@ -307,7 +307,6 @@ const MapComponent: React.FC = () => {
 
             <div className="map-container">
                 <MapContainer center={SINGAPORE_CENTER} zoom={12} style={{ height: '100%', width: '100%' }}>
-                    {/* CORRECTED URL HERE */}
                     <TileLayer
                         url="https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png"
                         attribution='Map data © contributors, <a href="https://www.sla.gov.sg/">Singapore Land Authority</a>'
@@ -327,7 +326,8 @@ const MapComponent: React.FC = () => {
                         ));
                     })}
                     
-                     {sortedRoutes.find(r => r.id === selectedRouteId)?.segments.slice(0, -1).map((seg, i) => {
+                    {/* Transfer Markers */}
+                    {sortedRoutes.find(r => r.id === selectedRouteId)?.segments.slice(0, -1).map((seg, i) => {
                         const lastPos = seg.positions[seg.positions.length - 1];
                         return (
                              <CircleMarker 
@@ -338,6 +338,21 @@ const MapComponent: React.FC = () => {
                             />
                         )
                     })}
+                    
+                    {/* Custom Location Markers (FIXED: Added this loop back) */}
+                    {Object.values(customLocations).map(loc => (
+                        <Marker
+                            key={loc.id}
+                            position={[loc.lat, loc.lng]}
+                            icon={L.divIcon({
+                                html: `<div style="background-color: #27ae60; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
+                                iconSize: [16, 16],
+                                className: 'custom-location-marker'
+                            })}
+                        >
+                            <Popup>{loc.name}</Popup>
+                        </Marker>
+                    ))}
 
                     {metadata && metadata[startId] && (
                         <Marker position={[metadata[startId].lat, metadata[startId].lng]}>
